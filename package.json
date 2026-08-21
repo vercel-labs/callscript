@@ -1,0 +1,19 @@
+{
+	"name": "callscript-monorepo",
+	"version": "0.0.0",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"test": "turbo run test",
+		"typecheck": "turbo run typecheck",
+		"build": "turbo run build",
+		"dev": "turbo run dev",
+		"lint": "biome check .",
+		"format": "biome format --write ."
+	},
+	"devDependencies": {
+		"@biomejs/biome": "^2.5.7",
+		"turbo": "^2.5.0"
+	},
+	"packageManager": "pnpm@10.29.3"
+}

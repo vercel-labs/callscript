@@ -1,0 +1,65 @@
+{
+	"name": "callscript",
+	"version": "0.1.0",
+	"type": "module",
+	"description": "a tool-calling script language for LLMs - the model authors ONE small script (plain JS, compiled to a validated, bounded, inert JSON plan - never executed) instead of calling tools one at a time. Adapter-based: mount AI SDK tools, better-tools, or plain { name, execute } literals",
+	"license": "MIT",
+	"author": "Bereket Engida",
+	"keywords": [
+		"llm",
+		"tool-calling",
+		"agents",
+		"ai-sdk",
+		"code-mode"
+	],
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"default": "./dist/index.js"
+		},
+		"./ai-sdk": {
+			"types": "./dist/ai-sdk.d.ts",
+			"default": "./dist/ai-sdk.js"
+		},
+		"./better-tools": {
+			"types": "./dist/better-tools.d.ts",
+			"default": "./dist/better-tools.js"
+		},
+		"./eve": {
+			"types": "./dist/eve.d.ts",
+			"default": "./dist/eve.js"
+		}
+	},
+	"files": [
+		"dist"
+	],
+	"scripts": {
+		"build": "tsdown",
+		"test": "vitest run",
+		"typecheck": "tsc --noEmit"
+	},
+	"dependencies": {
+		"acorn": "^8.15.0",
+		"zod": "^4.4.3"
+	},
+	"peerDependencies": {
+		"ai": ">=5",
+		"eve": ">=0.39.0"
+	},
+	"peerDependenciesMeta": {
+		"ai": {
+			"optional": true
+		},
+		"eve": {
+			"optional": true
+		}
+	},
+	"devDependencies": {
+		"@types/node": "^24.0.0",
+		"ai": "^7.0.47",
+		"eve": "^0.39.0",
+		"tsdown": "^0.22.14",
+		"typescript": "^5.9.0",
+		"vitest": "^3.2.0"
+	}
+}

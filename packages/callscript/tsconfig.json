@@ -1,0 +1,22 @@
+{
+	"compilerOptions": {
+		"strict": true,
+		"target": "esnext",
+		"module": "esnext",
+		"moduleResolution": "bundler",
+		"lib": ["esnext", "dom", "dom.iterable"],
+		"esModuleInterop": true,
+		"skipLibCheck": true,
+		"verbatimModuleSyntax": true,
+		"noUncheckedIndexedAccess": true,
+		"exactOptionalPropertyTypes": false,
+		"noErrorTruncation": true,
+		"noEmit": true,
+		"types": ["node"],
+		// Examples carry explicit .ts extensions so they run on plain
+		// `bun examples/...` - no build step.
+		"allowImportingTsExtensions": true
+	},
+	"include": ["src", "test", "examples"],
+	"exclude": ["**/dist/**", "**/node_modules/**"]
+}

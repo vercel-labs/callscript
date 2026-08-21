@@ -1,0 +1,27 @@
+{
+	"root": true,
+	"$schema": "./node_modules/@biomejs/biome/configuration_schema.json",
+	"formatter": {
+		"enabled": true,
+		"indentStyle": "tab"
+	},
+	"linter": {
+		"enabled": true,
+		"rules": {
+			"suspicious": {
+				"noExplicitAny": "off",
+				"noConfusingVoidType": "off",
+				"noTemplateCurlyInString": "off"
+			},
+			"style": {
+				"noNonNullAssertion": "off"
+			}
+		}
+	},
+	"assist": {
+		"enabled": true
+	},
+	"files": {
+		"includes": ["**", "!**/dist", "!**/coverage", "!**/.cache"]
+	}
+}
