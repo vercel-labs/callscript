@@ -122,10 +122,11 @@ npx callscript skill
 				</p>
 				<p>
 					With callscript, the model writes the{" "}
-					<span className="text-ink">whole plan up front</span>. The engine
-					checks it, runs the steps - in parallel where they don&apos;t depend
-					on each other - and passes results between them directly, without
-					going back through the prompt.
+					<span className="text-ink">whole plan up front</span>, as plain
+					JavaScript it never gets to run. The engine checks it, runs the
+					steps - in parallel where they don&apos;t depend on each other - and
+					passes results between them directly, without going back through the
+					prompt.
 				</p>
 			</>
 		),
@@ -491,15 +492,13 @@ export default function Home() {
 						Code Mode, without the sandbox.
 					</p>
 					<p className="mt-4 max-w-[60ch] text-base leading-7 text-dim">
-						A tool&#8209;calling script language for LLMs: instead of calling
-						tools one at a time, the model authors one small script -{" "}
-						<span className="text-ink">
-							plain JavaScript, compiled to an inert JSON plan, never executed
-							as code
-						</span>{" "}
-						- validated before anything runs, executed with bounded call counts,
-						steps scheduled by data dependency. Loops, branches, and dataflow,
-						with none of the machinery.
+						The model writes plain JavaScript - the language it already knows,
+						not a custom DSL - and{" "}
+						<span className="text-ink">it never runs</span>. The engine compiles
+						it into an inert JSON plan, validates the whole thing before
+						anything executes, and the only things that can run are the tools
+						you mounted. Loops, branches, dataflow, bounded calls - none of the
+						machinery.
 					</p>
 				</section>
 				{sections.map((s) => (

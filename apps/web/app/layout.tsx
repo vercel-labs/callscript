@@ -11,12 +11,12 @@ const jetbrainsMono = JetBrains_Mono({
 export const metadata: Metadata = {
 	title: "callscript - Code Mode, without the sandbox",
 	description:
-		"A tool-calling script language for LLMs: the model writes plain JavaScript, compiled to one validated, bounded, inert plan - never executed as code.",
+		"The model writes JavaScript - and it never runs. Compiled to one validated, bounded, inert JSON plan; the only things that can execute are the tools you mounted.",
 	metadataBase: new URL("https://callscript.dev"),
 	openGraph: {
 		title: "callscript - Code Mode, without the sandbox",
 		description:
-			"A tool-calling script language for LLMs: plain JS in, one validated, bounded, inert plan out - never executed as code.",
+			"The model writes JavaScript - and it never runs. Plain JS in, one validated, bounded, inert plan out; only mounted tools execute.",
 	},
 };
 

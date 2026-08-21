@@ -2,7 +2,7 @@
 
 **Code Mode, without the sandbox.**
 
-A tool-calling **script language for LLMs**: instead of calling tools one at a time, the model authors ONE small script - plain JavaScript statements, **compiled (never executed) into an inert JSON plan** - validated before anything runs (every issue reported at once), executed with bounded call counts, steps scheduled by data dependency.
+**The model writes JavaScript - and it never runs.** Instead of calling tools one at a time, the model authors ONE small script in TypeScript and it compiles into an inert JSON plan: validated whole before anything runs (every issue reported at once), executed with bounded call counts, steps scheduled by data dependency. The only things that can execute are the tools you mounted.
 
 ## Install
 
@@ -38,7 +38,7 @@ Classic tool calling has a shape problem: one call per model round-trip. Every i
 
 **Code Mode** fixes this by having the model write real TypeScript that calls the tools, then executing that program. The insight is right: models are better at writing programs than at emitting tool-call chains, and intermediate data should flow between calls without a detour through the context. But the price is that you are now executing arbitrary LLM-authored code, so you need a sandbox: an isolate, a container, a worker. That is infrastructure to run, and a security boundary you must get exactly right.
 
-**callscript is Code Mode without the sandbox.** The model still authors one program, with loops, branches, and dataflow, but the program is inert JSON with a pure expression subset, not arbitrary code. The only things that can execute are the tools you mounted. That one change buys the rest:
+**callscript is Code Mode without the sandbox.** The model still authors one program - in the JavaScript it already writes, with loops, branches, and dataflow - but nothing it writes ever executes as code: the script compiles into inert JSON with a pure expression subset. The only things that can execute are the tools you mounted. That one change buys the rest:
 
 - **No sandbox needed**: there is no arbitrary code to contain. Expressions are a side-effect-free JS subset (no I/O, no globals, no imports), so the engine runs wherever your JS runs: serverless, edge, the same process as your app.
 - **Statically checkable**: because the plan is data, the whole thing validates before anything runs: unknown tools, misshaped args, unbound references, every issue reported at once. Arbitrary code can only fail at runtime, one error at a time.
