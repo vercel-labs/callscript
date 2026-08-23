@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { scriptEngine } from "../engine";
+import { callscript } from "../engine";
 import { tool } from "../tool";
 import { toEveTools } from "./eve";
 
@@ -11,7 +11,7 @@ const closeIssue = tool({
 
 describe("toEveTools", () => {
 	it("returns both tools as branded eve definitions", () => {
-		const engine = scriptEngine({ tools: [closeIssue] });
+		const engine = callscript({ tools: [closeIssue] });
 		const { execute, search } = toEveTools(engine);
 		// eve's defineTool stamps a brand lifecycle code validates - the
 		// definitions must not be raw literals
@@ -24,7 +24,7 @@ describe("toEveTools", () => {
 	});
 
 	it("execute runs scripts and search finds tools, sharing a session", async () => {
-		const engine = scriptEngine({ tools: [closeIssue] });
+		const engine = callscript({ tools: [closeIssue] });
 		const { execute, search } = toEveTools(engine);
 		const found = await (search.execute as any)({ query: "close issue" });
 		expect(found).toContain("github.closeIssue");
@@ -40,7 +40,7 @@ describe("toEveTools", () => {
 	});
 
 	it("invalid scripts come back as issues, not throws", async () => {
-		const engine = scriptEngine({ tools: [closeIssue] });
+		const engine = callscript({ tools: [closeIssue] });
 		const { execute } = toEveTools(engine);
 		const result = await (execute.execute as any)({
 			steps: [{ call: "github.nope", args: {} }],

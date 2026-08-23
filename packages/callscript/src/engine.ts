@@ -79,7 +79,7 @@ import {
 export interface ScriptEngineOptions<TS extends readonly AnyScriptTool[]> {
 	/**
 	 * The tools scripts may call, by NAME - hand it adapter output
-	 * (`fromAISDKTools(...)`, `betterTools(...)`), plain literals, compiled
+	 * (`fromAISDKTools(...)`), plain literals, compiled
 	 * scripts from another engine, or any mix.
 	 */
 	tools: TS;
@@ -275,7 +275,7 @@ export interface ScriptEngine<TS extends readonly AnyScriptTool[]> {
 	plan: typeof planExecution;
 }
 
-export const scriptEngine = <const TS extends readonly AnyScriptTool[]>(
+export const callscript = <const TS extends readonly AnyScriptTool[]>(
 	options: ScriptEngineOptions<TS>,
 ): ScriptEngine<TS> => {
 	// name -> tool. Two entries under one name would make dispatch

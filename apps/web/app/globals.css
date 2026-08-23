@@ -4,7 +4,7 @@
 
 @theme inline {
 	--font-sans: var(--font-geist), ui-sans-serif, system-ui, sans-serif;
-	--font-mono: var(--font-jetbrains-mono), ui-monospace, "SF Mono", monospace;
+	--font-mono: var(--font-geist-mono), ui-monospace, "SF Mono", monospace;
 	--color-line: var(--line);
 	--color-ink: var(--ink);
 	--color-dim: var(--dim);
@@ -17,12 +17,13 @@
  * flash light before the .dark class applies */
 :root,
 .dark {
-	--bg: #121214;
-	--raise: #1b1b1e;
-	--line: #2c2c30;
-	--ink: #ededed;
-	--dim: #b4b4b4;
-	--faint: #7d7d82;
+	/* vercel labs palette (agent-browser.dev): neutral scale on #0a0a0a */
+	--bg: #0a0a0a;
+	--raise: #171717;
+	--line: #262626;
+	--ink: #f5f5f5;
+	--dim: #a3a3a3;
+	--faint: #737373;
 	color-scheme: dark;
 }
 
@@ -41,10 +42,9 @@ body {
 	color: var(--bg);
 }
 
-/* page backdrop: the raised tint pulled most of the way toward the
- * base background, so it reads near-black in dark mode */
+/* vercel labs: flat page background, no tint */
 .readme-bg {
-	background-color: color-mix(in srgb, var(--bg) 60%, var(--raise));
+	background-color: var(--bg);
 }
 
 .shiki {

@@ -6,10 +6,10 @@
  * door, and `execute` dispatches with AI-SDK-shaped call options:
  *
  *   import { tool } from "ai";
- *   import { scriptEngine } from "callscript";
+ *   import { callscript } from "callscript";
  *   import { fromAISDKTools } from "callscript/ai-sdk";
  *
- *   const engine = scriptEngine({
+ *   const engine = callscript({
  *     tools: fromAISDKTools({ getWeather, closeIssue }),
  *   });
  *

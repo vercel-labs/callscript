@@ -1,12 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import {
 	type CallRequest,
-	createRunner,
 	publishedVariables,
 	type Script,
-	type ScriptRunner,
 	validateScript,
 } from "./index";
+import { createRunner, type ScriptRunner } from "./runner";
 
 /** Published variables of the runner's session record ({} before any run). */
 function sessionVars(runner: ScriptRunner): Record<string, unknown> {

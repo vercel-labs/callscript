@@ -1,5 +1,5 @@
 import { describe, expect, expectTypeOf, it } from "vitest";
-import { scriptEngine, suspend } from "./engine";
+import { callscript, suspend } from "./engine";
 import {
 	EarlyReturnSignal,
 	publishedVariables,
@@ -37,7 +37,7 @@ const makeTools = () => {
 describe("scope as session", () => {
 	it("two runs sharing a scope share the session record - no state threading", async () => {
 		const { listIssues, closeIssue, calls } = makeTools();
-		const engine = scriptEngine({ tools: [listIssues, closeIssue] });
+		const engine = callscript({ tools: [listIssues, closeIssue] });
 		const scope = engine.scope();
 
 		const first = await engine.run(
@@ -69,7 +69,7 @@ describe("scope as session", () => {
 
 	it("without a shared scope, runs stay isolated", async () => {
 		const { listIssues } = makeTools();
-		const engine = scriptEngine({ tools: [listIssues] });
+		const engine = callscript({ tools: [listIssues] });
 		await engine.run({
 			script: {
 				steps: [{ id: "issues", call: "issues.list", args: { repo: "api" } }],
@@ -84,7 +84,7 @@ describe("scope as session", () => {
 
 	it("explicit state still wins over the scope", async () => {
 		const { listIssues } = makeTools();
-		const engine = scriptEngine({ tools: [listIssues] });
+		const engine = callscript({ tools: [listIssues] });
 		const scope = engine.scope();
 		const first = await engine.run(
 			{
@@ -113,7 +113,7 @@ describe("scope as session", () => {
 					? publishedVariables(ctx.scope.state).stale
 					: undefined,
 		});
-		const engine = scriptEngine({ tools: [listIssues, readBack] });
+		const engine = callscript({ tools: [listIssues, readBack] });
 		const scope = engine.scope();
 
 		await engine.run(
@@ -142,7 +142,7 @@ describe("scope as session", () => {
 
 	it("the scope's state is directly inspectable", async () => {
 		const { listIssues } = makeTools();
-		const engine = scriptEngine({ tools: [listIssues] });
+		const engine = callscript({ tools: [listIssues] });
 		const scope = engine.scope();
 		await engine.run(
 			{
@@ -181,7 +181,7 @@ describe("engine.tool - a script compiled into a tool", () => {
 
 	it("compiles and calls; the card carries the description", async () => {
 		const { listIssues, closeIssue } = makeTools();
-		const engine = scriptEngine({ tools: [listIssues, closeIssue] });
+		const engine = callscript({ tools: [listIssues, closeIssue] });
 		const closeStale = engine.tool("github.closeStale", staleScript, {
 			description: "close every stale issue",
 		});
@@ -196,7 +196,7 @@ describe("engine.tool - a script compiled into a tool", () => {
 
 	it("an unknown tool fails at COMPILE time", () => {
 		const { listIssues } = makeTools();
-		const engine = scriptEngine({ tools: [listIssues] });
+		const engine = callscript({ tools: [listIssues] });
 		expect(() =>
 			engine.tool("bad", { steps: [{ call: "github.bogus" }] } as any),
 		).toThrow(ScriptValidationError);
@@ -204,7 +204,7 @@ describe("engine.tool - a script compiled into a tool", () => {
 
 	it("session externals compile; a missing one fails pointedly at call time", async () => {
 		const { listIssues } = makeTools();
-		const engine = scriptEngine({ tools: [listIssues] });
+		const engine = callscript({ tools: [listIssues] });
 		const summarize = engine.tool("session.summarize", {
 			steps: [{ id: "s", let: "issues.length" }],
 		} as any);
@@ -228,7 +228,7 @@ describe("engine.tool - a script compiled into a tool", () => {
 
 	it("a return gate throws EarlyReturnSignal; re-calling in the scope resumes", async () => {
 		const { listIssues, closeIssue, calls } = makeTools();
-		const engine = scriptEngine({ tools: [listIssues, closeIssue] });
+		const engine = callscript({ tools: [listIssues, closeIssue] });
 		const closeStale = engine.tool("github.closeStale", staleScript);
 		const scope = engine.scope();
 
@@ -254,7 +254,7 @@ describe("engine.tool - a script compiled into a tool", () => {
 				return { ok: args.code === "42" };
 			},
 		});
-		const engine = scriptEngine({ tools: [verify] });
+		const engine = callscript({ tools: [verify] });
 		const check = engine.tool("otp.check", {
 			steps: [{ id: "r", call: "otp.verify", args: { code: "=input.code" } }],
 		} as any);
@@ -268,14 +268,14 @@ describe("engine.tool - a script compiled into a tool", () => {
 
 	it("mounts as a TOOL of another engine - and its gate ends the hosting run", async () => {
 		const { listIssues, closeIssue, calls } = makeTools();
-		const inner = scriptEngine({ tools: [listIssues, closeIssue] });
+		const inner = callscript({ tools: [listIssues, closeIssue] });
 		const closeStale = inner.tool("github.closeStale", staleScript);
 
 		const notify = tool({
 			name: "slack.notify",
 			execute: (args: { text: string }) => ({ sent: args.text }),
 		});
-		const outer = scriptEngine({ tools: [closeStale, notify] });
+		const outer = callscript({ tools: [closeStale, notify] });
 		expect(outer.tools).toContain("github.closeStale");
 
 		const outerScript = outer.script({
@@ -318,7 +318,7 @@ describe("engine.tool - a script compiled into a tool", () => {
 
 describe("typed script authoring", () => {
 	const { listIssues, closeIssue } = makeTools();
-	const engine = scriptEngine({ tools: [listIssues, closeIssue] });
+	const engine = callscript({ tools: [listIssues, closeIssue] });
 
 	it("engine.script validates and normalizes a typed literal", () => {
 		const script = engine.script({

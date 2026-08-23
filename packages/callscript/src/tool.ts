@@ -1,7 +1,7 @@
 /**
  * The tool contract - the ONE seam between the engine and whatever
  * provides its tools. The engine never knows about AI SDK tools, v.fns,
- * better-tools instances, or anything else: an ADAPTER turns each of
+ * * or anything else: an ADAPTER turns each of
  * those into this shape, and a plain object literal is already one.
  *
  * - `name` is the registry: a script's `call` names a tool by it, and

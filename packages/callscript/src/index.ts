@@ -1,10 +1,10 @@
-/* The tool door - the primary surface of this package. Adapters live
- * under their own entry points: `callscript/ai-sdk`, `callscript/better-tools`. */
+/* The callscript public API: the tool door (`callscript`), the tool
+ * contract (`tool`), the JS frontend, the validator, and the inert plan
+ * format. Adapters live under their own entry points: `callscript/ai-sdk`.
+ * Everything else in src/ is internal - reachable, tested, but not part
+ * of the v1 surface. */
 
-export * from "./analyze";
-export * from "./args";
-export * from "./describe";
-export * from "./durable";
+// the engine - mount tools, get the execute/search pair
 export {
 	type AgentExecuteResult,
 	type AgentSearchInput,
@@ -17,25 +17,11 @@ export {
 	type ScriptEngineOptions,
 	type SessionOptions,
 	type SessionRunner,
-	scriptEngine,
+	callscript,
 	suspend,
 } from "./engine";
-export * from "./execute";
-export { type EvalOptions, evalExpr } from "./expr/eval";
-export {
-	collectRefs,
-	ExprError,
-	type ExprErrorCode,
-	FORBIDDEN_PROPS,
-	GLOBAL_NAMES,
-	parseExpr,
-	patternNames,
-	validateNode,
-} from "./expr/parse";
-export { fnToExpr, resolveFnExprs } from "./fn-expr";
-export { type ParseJsOptions, parseJsScript } from "./js";
-export * from "./runner";
-export * from "./schema";
+
+// the tool contract - the one seam adapters (and literals) fill
 export {
 	type AnyScriptTool,
 	createScope,
@@ -46,20 +32,36 @@ export {
 	type ToolMap,
 	tool,
 } from "./tool";
-export type {
-	Expr,
-	ExprFn,
-	ExprLike,
-	ExprScope,
-	TypedCallStep,
-	TypedLetStep,
-	TypedReturnStep,
-	TypedScript,
-	TypedScriptOf,
-	TypedStep,
-	TypedStepsOf,
-	WithExprs,
-} from "./typed";
+
+// the JS frontend - model-authored JS in, inert plan out
+export { type ParseJsOptions, parseJsScript } from "./js";
+
+// the validator - the whole plan checked before anything runs
+export {
+	type ScriptIssue,
+	ScriptValidationError,
+	type ValidateOptions,
+	validateScript,
+} from "./validate";
+
+// analysis + rendering - what an authorizer reads before approving
+export { analyzeScript, renderScript } from "./analyze";
+
+// prompt-building blocks for hosts that assemble their own cards
+export {
+	type IntrospectableTool,
+	jsLanguageCard,
+	renderJsonSchemaType,
+	searchTools,
+	toolCard,
+	toolCards,
+} from "./describe";
+
+// session inspection
+export { publishedVariables } from "./execute";
+
+// the plan format - steps, limits, run records, and their guards
 export * from "./types";
-export * from "./validate";
-export * from "./wildcard";
+
+// the durable runner - experimental, see durable.ts
+export * from "./durable";

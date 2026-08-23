@@ -4,7 +4,6 @@ export default defineConfig({
 	entry: {
 		index: "./src/index.ts",
 		"ai-sdk": "./src/adapters/ai-sdk.ts",
-		"better-tools": "./src/adapters/better-tools.ts",
 		eve: "./src/adapters/eve.ts",
 	},
 	format: ["esm"],

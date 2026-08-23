@@ -147,6 +147,7 @@ const scriptHashOf = (script: Script): string =>
 
 const mintRunId = (): string => `run_${crypto.randomUUID().slice(0, 13)}`;
 
+/** @experimental The durable runner API may change before it stabilizes in a minor release. */
 export function createDurableRunner(
 	options: DurableRunnerOptions,
 ): DurableRunner {

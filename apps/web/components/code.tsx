@@ -30,7 +30,7 @@ export async function Code({
 		);
 	}
 	return (
-		<figure className="border border-line bg-bg">
+		<figure className="overflow-hidden rounded-lg border border-line bg-bg">
 			{title ? (
 				<figcaption className="flex items-center gap-2 border-b border-line bg-raise px-3.5 py-2 text-[12px] text-faint">
 					<span

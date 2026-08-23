@@ -8,12 +8,12 @@ import { describe, expect, it } from "vitest";
 import {
 	type CallRequest,
 	earlyReturn,
-	executeScript,
 	renderScript,
 	type Script,
 	ScriptValidationError,
 	validateScript,
 } from "./index";
+import { executeScript } from "./execute";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 

@@ -2,11 +2,10 @@ import { describe, expect, it, vi } from "vitest";
 import {
 	type CallRequest,
 	type ExecuteResult,
-	executeScript,
-	planExecution,
 	type Script,
 	validateScript,
 } from "./index";
+import { executeScript, planExecution } from "./execute";
 
 const issues = [
 	{ number: 1, updated_at: "2019-01-01T00:00:00Z" },

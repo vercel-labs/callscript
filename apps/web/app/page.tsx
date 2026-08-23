@@ -1,6 +1,7 @@
 import { Code } from "@/components/code";
 import { SiteHeader } from "@/components/site-header";
 import { Tabs } from "@/components/tabs";
+import { Toc } from "@/components/toc";
 
 const GITHUB = "https://github.com/better-auth/callscript";
 
@@ -55,7 +56,7 @@ const tsIcon = (
 
 function K({ children }: { children: React.ReactNode }) {
 	return (
-		<code className="rounded-none border border-line bg-raise px-1.5 py-0.5 font-mono text-[13px] text-ink">
+		<code className="rounded border border-line bg-raise px-1.5 py-0.5 font-mono text-[13px] text-ink">
 			{children}
 		</code>
 	);
@@ -63,7 +64,177 @@ function K({ children }: { children: React.ReactNode }) {
 
 const sections = [
 	{
-		n: "00",
+		id: "why",
+		title: "why",
+		content: (
+			<>
+				<p>
+					Say you have two GitHub tools mounted - <K>listIssues</K>, which
+					returns the first 100 issues of a repo, and <K>closeIssue</K>, which
+					closes one issue by number - plus <K>slack.post</K>, and you prompt
+					the agent:
+				</p>
+				<div className="py-1 text-left font-mono text-[14px] text-ink">
+					<span className="text-[17px] text-faint">›</span> close stale issues
+					and notify #eng
+				</div>
+				<p>
+					With plain tool calling, every <K>listIssues</K> call lands all 100
+					issues in the agent&apos;s context. To pick the stale ones it has to
+					read them; to close them it has to generate tokens for each{" "}
+					<K>closeIssue</K> call - and so on, one round-trip at a time.
+				</p>
+				<p>
+					That is slow, costs tokens, and there is no plan to review: no way to
+					see the full set of calls ahead of time, judgments like
+					&quot;stale&quot; are made mid-run, one reply at a time, and a small
+					mistake - a missing argument, a wrong tool name - only surfaces as a
+					runtime error on the server.
+				</p>
+				<p>
+					<a
+						href="https://developers.cloudflare.com/agents/tools/codemode/"
+						className="text-ink underline underline-offset-4"
+					>
+						Code Mode
+					</a>{" "}
+					- or, in Anthropic&apos;s writing,{" "}
+					<a
+						href="https://www.anthropic.com/engineering/code-execution-with-mcp"
+						className="text-ink underline underline-offset-4"
+					>
+						code execution with MCP
+					</a>{" "}
+					- solves this by giving the model type definitions for the tools and
+					letting it write a TypeScript program against them: models are better
+					at writing programs than at emitting tool-call chains, and results
+					flow between calls without going back through the model. But code mode
+					introduces its own complexity - from Anthropic&apos;s:
+				</p>
+				<blockquote className="border-l-2 border-line pl-4 text-[14px] leading-6 text-dim">
+					Note that code execution introduces its own complexity. Running
+					agent-generated code requires a secure execution environment with
+					appropriate sandboxing, resource limits, and monitoring. These
+					infrastructure requirements add operational overhead and security
+					considerations that direct tool calls avoid. The benefits of code
+					execution—reduced token costs, lower latency, and improved tool
+					composition—should be weighed against these implementation costs.
+				</blockquote>
+				<p>
+					But calling tools and APIs shouldn&apos;t need a Turing-complete
+					language. By the{" "}
+					<a
+						href="https://en.wikipedia.org/wiki/Rule_of_least_power"
+						className="text-ink underline underline-offset-4"
+					>
+						rule of least power
+					</a>
+					, the unused power is what forces the sandbox and keeps the code from
+					being validated, bounded, or paused.
+				</p>
+			</>
+		),
+	},
+	{
+		id: "the-script",
+		title: "the script",
+		content: (
+			<>
+				<p>
+					CallScript keeps{" "}
+					<span className="text-ink">
+						the parts of JavaScript the job needs
+					</span>{" "}
+					- calls, dataflow, branches, bounded fan-outs - and compiles them to
+					inert data before anything executes. The benefits stay and the
+					infrastructure goes: a plan and its state are plain data, so a run
+					stores anywhere, resumes later, and takes new input when it does.
+				</p>
+				<p>
+					The agent answers the same prompt by writing one small JavaScript
+					program:
+				</p>
+				<Code
+					code={`
+// close stale issues and notify #eng
+const issues = await github.listIssues({ repo: "api" });
+const stale = issues.filter(i => i.stale);
+const closed = await Promise.all(
+  stale.slice(0, 10).map(i => github.closeIssue({ repo: "api", number: i.number })));
+await slack.post({ channel: "#eng", text: "stale issues closed" });
+`}
+				/>
+				<p>
+					The engine never executes it - each statement compiles into one step
+					of an inert JSON plan:
+				</p>
+				<Code
+					code={`
+{
+	"intent": "close stale issues and notify #eng",
+	"steps": [
+		{ "id": "issues", "call": "github.listIssues", "args": { "repo": "api" } },
+		{ "id": "stale", "let": "issues.filter(i => i.stale)" },
+		{
+			"id": "closed",
+			"call": "github.closeIssue",
+			"each": "stale.map(i => ({ repo: 'api', number: i.number }))",
+			"max": 10
+		},
+		{
+			"call": "slack.post",
+			"args": { "channel": "#eng", "text": "stale issues closed" },
+			"after": ["closed"]
+		}
+	]
+}
+`}
+				/>
+				<p>
+					Steps reference each other by id, and those references are the
+					schedule: independent steps run concurrently, dependent ones wait.
+					Awaited calls keep statement order, and <K>Promise.all</K> runs calls
+					in parallel. That one change buys:
+				</p>
+				<ul className="space-y-2.5 pl-5 list-disc marker:text-faint">
+					<li>
+						<span className="font-medium text-ink">Fewer tokens.</span>{" "}
+						Intermediate results live in the run, not the context window - the
+						agent never re-reads 100 issues to close two.
+					</li>
+					<li>
+						<span className="font-medium text-ink">Serializable runs.</span> The
+						plan and its record are plain data, so pause &amp; resume,
+						approvals, and reading an earlier step&apos;s result need no extra
+						infrastructure.
+					</li>
+					<li>
+						<span className="font-medium text-ink">
+							Deterministic and reviewable.
+						</span>{" "}
+						&quot;Stale&quot; is a filter in the plan, not a judgment repeated
+						per issue - the same plan does the same thing, and you can approve
+						it whole before anything runs.
+					</li>
+					<li>
+						<span className="font-medium text-ink">Errors as dataflow.</span>{" "}
+						<K>try/catch</K> compiles to an error branch, and an{" "}
+						<K>idempotent</K> tool memoizes - retries never double-fire it.
+					</li>
+					<li>
+						<span className="font-medium text-ink">
+							Checked before it runs.
+						</span>{" "}
+						The plan validates whole - unknown tools, misshaped args, unbound
+						references, all at once - so a model slip costs a validation
+						message, not another round-trip.
+					</li>
+				</ul>
+			</>
+		),
+	},
+	{
+		id: "quick-start",
 		title: "quick start",
 		content: (
 			<>
@@ -81,10 +252,10 @@ npm install callscript
 				<Code
 					code={`
 import { generateText } from "ai";
-import { scriptEngine } from "callscript";
+import { callscript } from "callscript";
 import { toAISDKTools, fromAISDKTools } from "callscript/ai-sdk";
 
-const engine = scriptEngine({
+const engine = callscript({
 	tools: fromAISDKTools(tools, { namespace: "github" }),
 });
 
@@ -96,7 +267,7 @@ await generateText({
 `}
 				/>
 				<p>
-					Or from the <span className="text-ink">cli</span>, add the callscript
+					Or from the <span className="text-ink">cli</span>, add the CallScript
 					skill to an existing agent (claude code, cursor, ...):
 				</p>
 				<Code
@@ -109,181 +280,11 @@ npx callscript skill
 		),
 	},
 	{
-		n: "01",
-		title: "why",
+		id: "language",
+		title: "the language",
 		content: (
 			<>
-				<p>
-					With normal tool calling, the model makes one call per round-trip.
-					Every intermediate result has to travel back through the context
-					window just so the model can decide the next call. That is slow, it
-					costs tokens, and there is no plan anywhere you can look at - just a
-					growing transcript.
-				</p>
-				<p>
-					With callscript, the model writes the{" "}
-					<span className="text-ink">whole plan up front</span>, as plain
-					JavaScript it never gets to run. The engine checks it, runs the
-					steps - in parallel where they don&apos;t depend on each other - and
-					passes results between them directly, without going back through the
-					prompt.
-				</p>
-			</>
-		),
-	},
-	{
-		n: "01b",
-		title: "why not code mode",
-		content: (
-			<>
-				<p>
-					<span className="text-ink">Code Mode</span> attacks the same problem
-					by letting the model write real TypeScript against the tools, and the
-					insight is right: models are better at writing programs than at
-					emitting tool-call chains. callscript keeps the surface - the model
-					still writes what reads as a small JS program - but{" "}
-					<span className="text-ink">
-						compiles it to inert data instead of executing it
-					</span>
-					, avoiding the trade-offs of running arbitrary model-written code:
-				</p>
-				<ul className="space-y-2.5 pl-5 list-disc marker:text-faint">
-					<li>
-						<span className="font-medium text-ink">Runtime.</span> You need
-						somewhere to run it: a container, a V8 isolate, or a JS VM bundled
-						into your app. callscript runs no code, so the engine is just a
-						library in your process.
-					</li>
-					<li>
-						<span className="font-medium text-ink">Security.</span> The sandbox
-						has to be locked down: no network access, credentials kept out of
-						the code&apos;s reach. In callscript the only things that can run
-						are the tools you mounted.
-					</li>
-					<li>
-						<span className="font-medium text-ink">Validation.</span> Code can
-						only fail while it&apos;s running, one error at a time. A script is
-						checked before it runs, and every problem is reported at once.
-					</li>
-					<li>
-						<span className="font-medium text-ink">Limits.</span> Nothing stops
-						a loop from calling a tool a thousand times unless you build limits
-						yourself. In a script, every fan-out declares a <K>max</K> and the
-						engine enforces it.
-					</li>
-					<li>
-						<span className="font-medium text-ink">Results.</span> Sandboxed
-						code hands results back as logged text you parse afterwards. Script
-						steps return plain values you can read directly.
-					</li>
-					<li>
-						<span className="font-medium text-ink">Resumability.</span> Pausing
-						running code takes a durable-execution framework and code written
-						carefully to its rules. A script run is just data: it can stop at an
-						approval and resume where it left off, settled steps reused.
-					</li>
-				</ul>
-			</>
-		),
-	},
-	{
-		n: "02",
-		title: "the script",
-		content: (
-			<>
-				<p>
-					A callscript is written as the JavaScript an agent already knows - so
-					it needs almost no instruction - and{" "}
-					<span className="text-ink">
-						compiled by the engine into an inert JSON plan, never executed as
-						code
-					</span>
-					. Each statement desugars into one step: a <K>const</K> with{" "}
-					<K>await</K> is a tool call, a plain <K>const</K> a pure derivation,{" "}
-					<K>if (cond) return v</K> a guard, <K>Promise.all</K> over a{" "}
-					<K>.map</K> a bounded fan-out, <K>try/catch</K> the error branch. The
-					plan can also be authored directly as JSON, or in TypeScript with full
-					typing:
-				</p>
-				<Tabs
-					tabs={[
-						{
-							label: "js",
-							icon: jsIcon,
-							panel: (
-								<Code
-									code={`
-// close stale issues
-const issues = await github.listIssues({ repo: "api" });
-const stale = issues.filter(i => i.stale);
-if (stale.length === 0) return { closed: 0 };
-const closed = await Promise.all(
-  stale.slice(0, 10).map(i => github.closeIssue({ repo: "api", number: i.number })));
-return { count: closed.length };
-`}
-								/>
-							),
-						},
-						{
-							label: "json",
-							icon: jsonIcon,
-							panel: (
-								<Code
-									code={`
-{
-	"intent": "close stale issues",
-	"steps": [
-		{ "id": "issues", "call": "github.listIssues", "args": { "repo": "api" } },
-		{ "id": "stale", "let": "issues.filter(i => i.stale)" },
-		{
-			"id": "closed",
-			"call": "github.closeIssue",
-			"each": "stale.map(i => ({ repo: 'api', number: i.number }))",
-			"max": 10
-		}
-	]
-}
-`}
-								/>
-							),
-						},
-						{
-							label: "ts",
-							icon: tsIcon,
-							panel: (
-								<Code
-									code={`
-import { engine } from "./engine"; // your scriptEngine instance
-
-// fully typed: \`call\` autocompletes to mounted tool names, \`args\`
-// to that tool's input; arrows are transpiled (never executed)
-// into the string form, so the script stays inert data
-const script = engine.script({
-	steps: [
-		{ id: "issues", call: "github.listIssues", args: { repo: "api" } },
-		{ id: "stale", let: ({ issues }) => issues.filter((i) => i.stale) },
-		{
-			call: "github.closeIssue",
-			each: ({ stale }) => stale.map((i) => ({ repo: "api", number: i.number })),
-			max: 10,
-		},
-	],
-});
-`}
-								/>
-							),
-						},
-					]}
-				/>
-				<p>
-					Under the surface, a script is one inert JSON plan: a list of steps
-					wired by dataflow. Steps reference each other by id, and those
-					references are the schedule - independent steps run concurrently,
-					dependent ones wait for their inputs. In the JS form, awaited calls
-					additionally run in statement order (the compiler adds ordering edges
-					where no data flows), and <K>Promise.all</K> is the spelling for
-					&quot;these run in parallel&quot;. Each step is one of three verbs:
-				</p>
+				<p>Each step of a plan is one of three verbs:</p>
 				<ul className="space-y-2.5 pl-5 list-disc marker:text-faint">
 					<li>
 						<K>call</K> - <K>const x = await tool.name(&#123;...&#125;)</K> -
@@ -358,7 +359,142 @@ const script = engine.script({
 		),
 	},
 	{
-		n: "04",
+		id: "execute-search",
+		title: "execute & search",
+		content: (
+			<>
+				<p>
+					The model never carries every tool card in its prompt.{" "}
+					<K>engine.agentTools()</K> returns a host-neutral pair: <K>execute</K>{" "}
+					takes the script the model authored, validates it at the door, and
+					runs it against a shared session scope; <K>search</K> matches mounted
+					tools by keyword and returns their signature cards.
+				</p>
+				<Code
+					code={`
+const { execute, search } = engine.agentTools({ scope });
+
+// or wire a tool interface yourself:
+const def = engine.toolDefinition(); // { description, inputSchema }
+`}
+				/>
+				<p>
+					With 20 or fewer tools the cards inline into <K>execute</K>&apos;s
+					description. Past that - or with <K>inlineTools: false</K> - the model
+					discovers tools through <K>search</K> instead, so the prompt stays the
+					same size however many tools you mount. A rejected script returns{" "}
+					<K>status: &quot;invalid&quot;</K> with every issue at once for the
+					model to retry, and the session state rides the scope, never the
+					prompt.
+				</p>
+			</>
+		),
+	},
+	{
+		id: "validation",
+		title: "validation",
+		content: (
+			<>
+				<p>
+					The whole plan is checked before anything runs: unknown tools, args
+					that don&apos;t match the tool&apos;s schema, references to steps that
+					don&apos;t exist - every issue reported at once, not one runtime error
+					per attempt.
+				</p>
+				<p>
+					Anything outside the recognized grammar is rejected with a message
+					that names the callscript spelling, so one retry usually converges:
+				</p>
+				<Code
+					lang="text"
+					code={`
+while (queue.length) { await github.closeIssue({ number: next }); }
+  ✗ line 1: unbounded loops cannot run - fan out over a bounded list
+    instead: await Promise.all(items.slice(0, N).map(item => tool.name({ ... })))
+
+closed = await github.closeIssue({ number: 7 });
+  ✗ line 4: bindings are single-assignment - declare a new const instead of reassigning
+
+const seen = new Set(ids);
+  ✗ line 7: Unsupported syntax: new. Dedupe with
+    xs.filter((x, i, a) => a.indexOf(x) === i)
+`}
+				/>
+			</>
+		),
+	},
+	{
+		id: "limits",
+		title: "limits",
+		content: (
+			<>
+				<p>
+					Every engine carries hard limits: validation enforces them before a
+					run starts, execution enforces them while it runs, and{" "}
+					<K>engine.describe()</K> renders the live numbers into the prompt, so
+					the model authors against the same bounds the engine enforces.
+				</p>
+				<div className="overflow-x-auto">
+					<table className="w-full text-sm">
+						<thead>
+							<tr className="border-b border-line text-left text-faint">
+								<th className="py-2 pr-4 font-medium">limit</th>
+								<th className="py-2 pr-4 font-medium">default</th>
+								<th className="py-2 font-medium">bounds</th>
+							</tr>
+						</thead>
+						<tbody>
+							{(
+								[
+									["maxSteps", "20", "steps per script"],
+									[
+										"maxItemsPerStep",
+										"100",
+										"the max one each fan-out may declare",
+									],
+									["maxTotalCalls", "200", "worst-case total calls per script"],
+									["maxConcurrency", "5", "independent calls in flight"],
+									[
+										"maxExprNodes",
+										"100 000",
+										"AST nodes evaluated per expression",
+									],
+									[
+										"maxCallResultBytes",
+										"10 MiB",
+										"serialized size of one call's result",
+									],
+									[
+										"maxSuspendAttempts",
+										"5",
+										"re-raises of one suspension key",
+									],
+								] as const
+							).map(([name, def, what]) => (
+								<tr key={name} className="border-b border-line">
+									<td className="py-2 pr-4">
+										<K>{name}</K>
+									</td>
+									<td className="py-2 pr-4">{def}</td>
+									<td className="py-2">{what}</td>
+								</tr>
+							))}
+						</tbody>
+					</table>
+				</div>
+				<p>
+					Override any subset:{" "}
+					<K>
+						callscript(&#123; tools, limits: &#123; maxTotalCalls: 50 &#125;
+						&#125;)
+					</K>
+					.
+				</p>
+			</>
+		),
+	},
+	{
+		id: "suspend-resume",
 		title: "suspend & resume",
 		content: (
 			<>
@@ -408,7 +544,7 @@ const second = await engine.run({
 		),
 	},
 	{
-		n: "05",
+		id: "error-branch",
 		title: "the error branch",
 		content: (
 			<>
@@ -454,7 +590,60 @@ try {
 		),
 	},
 	{
-		n: "06",
+		id: "sessions",
+		title: "sessions & scope",
+		content: (
+			<>
+				<p>
+					<K>engine.scope()</K> mints the session as a plain value - no hidden
+					machinery. Runs handed the same scope share the accumulated record:
+					settled steps are reused, published outputs become session variables
+					later scripts read by name, and <K>vars</K> carries host-seeded data.
+				</p>
+				<Code
+					code={`
+const scope = engine.scope({ user }); // seeds vars
+
+await engine.run({ script: one }, scope);
+await engine.run({ script: two }, scope); // reads one's step outputs
+`}
+				/>
+				<p>
+					This is how an agent recalls what it already did: a result computed
+					three runs ago is addressable by name instead of re-fetched through a
+					tool call. Tools see the scope too - <K>execute(args, ctx)</K>{" "}
+					receives <K>ctx.scope</K> - and <K>engine.session()</K> opens the full
+					runner on the same registry: detached background runs,{" "}
+					<K>await.&lt;id&gt;</K> joins, and a settlement digest.
+				</p>
+			</>
+		),
+	},
+	{
+		id: "memoization",
+		title: "idempotent tools memoize",
+		content: (
+			<>
+				<p>
+					A tool declaring <K>idempotent: true</K> promises
+					same-args-same-result. The engine then serves repeated calls by input
+					addressing: same tool plus same resolved args is one dispatch per
+					scope, shared even between concurrent steps - the memo holds the
+					in-flight promise, and failures never cache. The AI SDK shape
+					can&apos;t express it, so pass it as an override:
+				</p>
+				<Code
+					code={`
+fromAISDKTools(tools, {
+	overrides: { "svc.lookup": { idempotent: true } },
+});
+`}
+				/>
+			</>
+		),
+	},
+	{
+		id: "scripts-as-tools",
 		title: "scripts compile into tools",
 		content: (
 			<>
@@ -476,44 +665,161 @@ await closeStale.execute({ approved: true }, { scope }); // settled steps reused
 			</>
 		),
 	},
+	{
+		id: "adapters",
+		title: "adapters",
+		content: (
+			<>
+				<p>
+					The engine never knows where a tool came from; everything mounts
+					through one neutral shape - <K>&#123; name, execute &#125;</K> plus
+					optional schemas - so sources mix freely, namespaced side by side:
+				</p>
+				<Tabs
+					tabs={[
+						{
+							label: "ai sdk",
+							panel: (
+								<Code
+									code={`
+import { toAISDKTools, fromAISDKTools } from "callscript/ai-sdk";
+
+const engine = callscript({
+	tools: [
+		...fromAISDKTools(github, { namespace: "github" }),
+		...fromAISDKTools(slack, { namespace: "slack" }),
+	],
+});
+
+// hand the model the engine as the execute/search pair
+await generateText({ model, prompt, tools: toAISDKTools(engine) });
+`}
+								/>
+							),
+						},
+						{
+							label: "eve",
+							panel: (
+								<Code
+									code={`
+// lib/callscript.ts
+import { toEveTools } from "callscript/eve";
+export const { execute, search } = toEveTools(engine);
+
+// agent/tools/execute.ts - eve tools are one file per tool
+export { execute as default } from "../../lib/callscript";
+`}
+								/>
+							),
+						},
+						{
+							label: "plain",
+							panel: (
+								<Code
+									code={`
+import { callscript, tool } from "callscript";
+
+const closeIssue = tool({
+	name: "github.closeIssue",
+	description: "close an issue by number",
+	inputSchema: { /* zod, any standard schema, or json schema */ },
+	execute: ({ number }) => ({ closed: number }),
+});
+
+const engine = callscript({ tools: [closeIssue] });
+`}
+								/>
+							),
+						},
+					]}
+				/>
+				<p>
+					Throw protocol from <K>execute</K>: throw to fail the step (a string{" "}
+					<K>code</K> on the error becomes the step error&apos;s code),{" "}
+					<K>throw earlyReturn(value)</K> to end the run here,{" "}
+					<K>throw suspend(&#123; key &#125;)</K> to park it on an external
+					event.
+				</p>
+			</>
+		),
+	},
+	{
+		id: "typed-authoring",
+		title: "typed authoring",
+		content: (
+			<>
+				<p>
+					<K>engine.script(&#123;...&#125;)</K> and <K>engine.tool(...)</K> are
+					typed against the engine: <K>call</K> autocompletes to mounted tool
+					names and <K>args</K> to that tool&apos;s input, so a typo&apos;d name
+					is a type error before it is a validation error. Every expression
+					position takes the string form or a real JS arrow, transpiled - never
+					executed - into the string at the door:
+				</p>
+				<Code
+					code={`
+engine.script({
+	steps: [
+		{ id: "issues", call: "github.listIssues", args: { repo: "api" } },
+		{ id: "stale", let: ({ issues }) => issues.filter((i) => i.stale) },
+	],
+});
+`}
+				/>
+				<p>
+					The arrow&apos;s parameter names everything the body reads; a free
+					name - including a captured outer variable, the thing a native closure
+					could smuggle in - is rejected at the door. What&apos;s stored,
+					hashed, and re-executed is always the string form, so the script stays
+					inert data.
+				</p>
+			</>
+		),
+	},
 ];
 
 export default function Home() {
 	return (
 		<div className="readme-bg min-h-dvh">
 			<SiteHeader github={GITHUB} active="readme" />
-			<main className="mx-auto max-w-3xl px-6 pt-6 pb-16 sm:px-10">
-				{/* hero */}
-				<section className="pt-8">
-					<h1 className="text-4xl font-semibold tracking-tight text-ink sm:text-5xl">
-						callscript
-					</h1>
-					<p className="mt-4 text-lg font-medium tracking-tight text-ink sm:text-xl">
-						Code Mode, without the sandbox.
-					</p>
-					<p className="mt-4 max-w-[60ch] text-base leading-7 text-dim">
-						The model writes plain JavaScript - the language it already knows,
-						not a custom DSL - and{" "}
-						<span className="text-ink">it never runs</span>. The engine compiles
-						it into an inert JSON plan, validates the whole thing before
-						anything executes, and the only things that can run are the tools
-						you mounted. Loops, branches, dataflow, bounded calls - none of the
-						machinery.
-					</p>
-				</section>
-				{sections.map((s) => (
-					<section key={s.n} className="pt-12">
-						{s.title ? (
+			<div className="mx-auto flex max-w-6xl justify-center gap-12 px-6 pt-6 pb-16 sm:px-10">
+				<aside className="order-last sticky top-20 hidden h-fit w-44 shrink-0 pt-10 lg:block">
+					<Toc items={sections.map(({ id, title }) => ({ id, title }))} />
+				</aside>
+				<main className="min-w-0 max-w-3xl flex-1">
+					{/* hero */}
+					<section className="pt-8">
+						<h1 className="text-4xl font-semibold tracking-tight text-ink sm:text-5xl">
+							CallScript
+						</h1>
+						<p className="mt-4 text-lg font-medium tracking-tight text-ink sm:text-xl">
+							Code Mode, without the sandbox.
+						</p>
+						<p className="mt-4 max-w-[60ch] text-base leading-7 text-dim">
+							The model writes a subset of JavaScript; callscript turns it into
+							a{" "}
+							<a
+								href="#the-script"
+								className="text-ink underline underline-offset-4"
+							>
+								JSON plan
+							</a>{" "}
+							that can be analyzed, safely executed, serialized, paused, and
+							resumed - the benefits of code execution, without the complexity.
+						</p>
+					</section>
+					{sections.map((s) => (
+						<section key={s.id} id={s.id} className="scroll-mt-20 pt-12">
 							<h2 className="mb-4 border-b border-line pb-2 text-xl font-semibold tracking-tight text-ink capitalize">
 								{s.title}
 							</h2>
-						) : null}
-						<div className="space-y-4 text-base leading-7 text-dim">
-							{s.content}
-						</div>
-					</section>
-				))}
-			</main>
+							<div className="space-y-4 text-base leading-7 text-dim">
+								{s.content}
+							</div>
+						</section>
+					))}
+				</main>
+			</div>
 		</div>
 	);
 }

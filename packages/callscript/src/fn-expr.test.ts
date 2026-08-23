@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { scriptEngine } from "./engine";
+import { callscript } from "./engine";
 import { fnToExpr } from "./fn-expr";
 import { tool } from "./tool";
 import { ScriptValidationError } from "./validate";
@@ -22,7 +22,7 @@ const closeIssue = tool({
 	}),
 });
 
-const engine = scriptEngine({ tools: [listIssues, closeIssue] });
+const engine = callscript({ tools: [listIssues, closeIssue] });
 
 /* ------------------------------- transpile -------------------------------- */
 

@@ -1,22 +1,22 @@
 import type { Metadata } from "next";
-import { Geist, JetBrains_Mono } from "next/font/google";
+import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 
 const geist = Geist({ subsets: ["latin"], variable: "--font-geist" });
-const jetbrainsMono = JetBrains_Mono({
+const geistMono = Geist_Mono({
 	subsets: ["latin"],
-	variable: "--font-jetbrains-mono",
+	variable: "--font-geist-mono",
 });
 
 export const metadata: Metadata = {
-	title: "callscript - Code Mode, without the sandbox",
+	title: "CallScript - Code Mode, without the sandbox",
 	description:
-		"The model writes JavaScript - and it never runs. Compiled to one validated, bounded, inert JSON plan; the only things that can execute are the tools you mounted.",
+		"The model writes JavaScript; callscript parses it into a JSON plan instead of executing it. Plans validate before they run, suspend and resume across processes, and keep intermediate results addressable. No sandbox, no separate runtime.",
 	metadataBase: new URL("https://callscript.dev"),
 	openGraph: {
-		title: "callscript - Code Mode, without the sandbox",
+		title: "CallScript - Code Mode, without the sandbox",
 		description:
-			"The model writes JavaScript - and it never runs. Plain JS in, one validated, bounded, inert plan out; only mounted tools execute.",
+			"The model writes JavaScript; callscript parses it into a JSON plan instead of executing it. No sandbox, no separate runtime — the only thing the code can execute is your tools.",
 	},
 };
 
@@ -24,7 +24,7 @@ export default function RootLayout({
 	children,
 }: Readonly<{ children: React.ReactNode }>) {
 	return (
-		<html lang="en" className={`${geist.variable} ${jetbrainsMono.variable} dark`}>
+		<html lang="en" className={`${geist.variable} ${geistMono.variable} dark`}>
 			<body className="font-sans">{children}</body>
 		</html>
 	);

@@ -2,7 +2,7 @@
 
 **Code Mode, without the sandbox.**
 
-**The model writes JavaScript - and it never runs.** Instead of calling tools one at a time, the model authors ONE small script in the JavaScript it already writes - no custom DSL to learn - and the engine **compiles it (never executes it) into an inert JSON plan**: validated whole before anything runs (every issue reported at once), executed with bounded call counts, steps scheduled by data dependency. The only things that can execute are the tools you mounted.
+**The model writes JavaScript; callscript parses it into a JSON plan instead of executing it.** Plans validate before they run, suspend and resume across processes, and keep intermediate results addressable so steps aren't re-executed to recover their output. With no sandbox and no separate runtime, the only thing the code can execute is your tools.
 
 ## Install
 
@@ -18,10 +18,10 @@ Mount your AI SDK tools on an engine and hand the model the ready-made tool pair
 
 ```ts
 import { generateText } from "ai";
-import { scriptEngine } from "callscript";
+import { callscript } from "callscript";
 import { toAISDKTools, fromAISDKTools } from "callscript/ai-sdk";
 
-const engine = scriptEngine({
+const engine = callscript({
 	tools: fromAISDKTools(tools, { namespace: "github" }),
 });
 
@@ -36,9 +36,11 @@ await generateText({
 
 Classic tool calling has a shape problem: one call per model round-trip. Every intermediate result travels back through the context window just so the model can look at it and decide the next call: slow, token-expensive, and the plan lives nowhere you can inspect it.
 
-**Code Mode** fixes this by having the model write real TypeScript that calls the tools, then executing that program. The insight is right: models are better at writing programs than at emitting tool-call chains, and intermediate data should flow between calls without a detour through the context. But the price is that you are now executing arbitrary LLM-authored code, so you need a sandbox: an isolate, a container, a worker. That is infrastructure to run, and a security boundary you must get exactly right.
+**[Code Mode](https://developers.cloudflare.com/agents/tools/codemode/)** fixes this by having the model write real TypeScript that calls the tools, then executing that program - Anthropic's [code execution with MCP](https://www.anthropic.com/engineering/code-execution-with-mcp) is the same idea. The insight is right: models are better at writing programs than at emitting tool-call chains, and intermediate data should flow between calls without a detour through the context. But both writeups name the price - from Anthropic's:
 
-**callscript is Code Mode without the sandbox.** The model still authors one program - in the JavaScript it already writes, with loops, branches, and dataflow - but nothing it writes ever executes as code: the script compiles into inert JSON with a pure expression subset. The only things that can execute are the tools you mounted. That one change buys the rest:
+> Note that code execution introduces its own complexity. Running agent-generated code requires a secure execution environment with appropriate sandboxing, resource limits, and monitoring. These infrastructure requirements add operational overhead and security considerations that direct tool calls avoid. The benefits of code execution—reduced token costs, lower latency, and improved tool composition—should be weighed against these implementation costs.
+
+**Calling tools doesn't need a Turing-complete language.** By the [rule of least power](https://en.wikipedia.org/wiki/Rule_of_least_power), the unused power is what forces the sandbox and keeps the code from being validated, bounded, or paused. So callscript keeps the parts of JavaScript the job needs - calls, dataflow, branches, bounded fan-outs. The model authors one small program in the JS it already writes, nothing it writes executes as code - the script compiles into inert JSON, and the only things that can execute are the tools you mounted. That one change buys the rest:
 
 - **No sandbox needed**: there is no arbitrary code to contain. Expressions are a side-effect-free JS subset (no I/O, no globals, no imports), so the engine runs wherever your JS runs: serverless, edge, the same process as your app.
 - **Statically checkable**: because the plan is data, the whole thing validates before anything runs: unknown tools, misshaped args, unbound references, every issue reported at once. Arbitrary code can only fail at runtime, one error at a time.
@@ -121,7 +123,7 @@ Every engine carries hard limits: validation enforces them before a run starts, 
 | `maxCallResultBytes` | 10 MiB | serialized size of a single call's result |
 | `maxSuspendAttempts` | 5 | times one suspension key may re-raise before failing |
 
-Override any subset: `scriptEngine({ tools, limits: { maxTotalCalls: 50 } })`.
+Override any subset: `callscript({ tools, limits: { maxTotalCalls: 50 } })`.
 
 ## Adapters
 
@@ -131,10 +133,9 @@ The engine is **adapter-based**. It never knows where a tool came from; everythi
 { name, description?, inputSchema?, outputSchema?, errors?, idempotent?, execute(args, ctx) }
 ```
 
-so you can use callscript purely with the AI SDK, with better-tools, with plain object literals, or any mix:
+so you can use callscript purely with the AI SDK, with plain object literals, or any mix:
 
 - **`callscript/ai-sdk`**: hand it the same `tools` record you'd give `generateText`/`streamText`
-- **`callscript/better-tools`**: mount a better-tools instance (structural: `definitions` + `call`)
 - **`callscript/eve`**: the engine's `execute`/`search` pair as ready-made [eve](https://github.com/vercel/eve) agent tools
 - **plain literals**: a `{ name, execute }` object is already a tool; the `tool()` helper pins the literals for typed authoring
 
@@ -145,7 +146,7 @@ AI SDK in, AI SDK out: you never hand-write a script. Define tools with the SDK'
 ```ts
 import { generateText, tool } from "ai";
 import { z } from "zod";
-import { scriptEngine } from "callscript";
+import { callscript } from "callscript";
 import { toAISDKTools, fromAISDKTools } from "callscript/ai-sdk";
 
 // the same `tool()` objects you'd hand generateText directly
@@ -160,7 +161,7 @@ const closeIssue = tool({
 	execute: async ({ number }) => ({ closed: number }),
 });
 
-const engine = scriptEngine({
+const engine = callscript({
 	// the whole record mounts at once, however many tools it holds;
 	// `namespace` prefixes the keys: github.listIssues, github.closeIssue
 	tools: fromAISDKTools({ listIssues, closeIssue }, { namespace: "github" }),
@@ -228,21 +229,11 @@ export { search as default } from "../../lib/callscript";
 
 The agent authors scripts through `execute` and discovers mounted tools through `search`, instead of carrying every tool card in its prompt. Options are `engine.agentTools`'s (`scope`, `inlineTools`, `names`); in eve the filename decides the model-facing name, so keep `names` in step with the files. A `defineDynamic` tools file can also serve the pair from one slot by returning the record as-is.
 
-## With better-tools
-
-```ts
-import { scriptEngine } from "callscript";
-import { betterTools } from "callscript/better-tools";
-
-const engine = scriptEngine({ tools: betterTools(t /* createTools() instance */) });
-```
-
-Dispatch goes through `instance.call`, so hooks, mounted vars, and context seeds apply as usual. Failures translate structurally: a declared refusal's `tag` becomes the step error's machine-readable `code`, a contract violation comes out as `invalid_tool_args`, and a defect-wrapped `earlyReturn`/`suspend` is unwrapped back into the engine signal.
 
 ## With plain tools
 
 ```ts
-import { scriptEngine, tool } from "callscript";
+import { callscript, tool } from "callscript";
 
 const closeIssue = tool({
 	name: "github.closeIssue",
@@ -252,7 +243,7 @@ const closeIssue = tool({
 	execute: (args: { repo: string; number: number }) => ({ closed: args.number }),
 });
 
-const engine = scriptEngine({ tools: [closeIssue] });
+const engine = callscript({ tools: [closeIssue] });
 ```
 
 Throw protocol from `execute`: throw to fail the step (a string `code` on the error surfaces as the step error's code), `throw earlyReturn(value)` to end the run here, `throw suspend({ key, ... })` to park it on an external event.
@@ -348,7 +339,7 @@ engine.script({
 
 The arrow's parameter is the **scope contract**: a plain destructuring naming everything the body reads (`input` and `$calls` included; aliases allowed; the key is the env name). The body must be a single expression in the same grammar as the strings, and a free name, including a captured outer variable (the thing a native closure could otherwise smuggle in), is rejected at the door. What's stored, hashed, rendered, and re-executed is always the string form, so the script stays inert data.
 
-The language core (the pure-JS expression subset, static validation, limits, records, reconciliation, the runner) is engine-independent and re-exported, so `validateScript` / `executeScript` / `createRunner` remain usable standalone with hand-written handlers.
+The language core (the pure-JS expression subset, static validation, limits, records, reconciliation, the runner) is engine-independent - `parseJsScript` and `validateScript` are usable standalone, and the engine is the door onto the rest.
 
 ## Playground
 

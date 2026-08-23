@@ -3,10 +3,10 @@ import {
 	type CallContext,
 	type CallRequest,
 	earlyReturn,
-	executeScript,
 	type Script,
 	validateScript,
 } from "./index";
+import { executeScript } from "./execute";
 
 describe("script-declared return", () => {
 	it("gates on input and re-evaluates on re-execute", async () => {

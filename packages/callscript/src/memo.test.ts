@@ -5,7 +5,7 @@
  * failures never cache.
  */
 import { describe, expect, it } from "vitest";
-import { scriptEngine } from "./engine";
+import { callscript } from "./engine";
 import { tool } from "./tool";
 
 const makeTools = () => {
@@ -40,7 +40,7 @@ const makeTools = () => {
 describe("idempotent tool memoization", () => {
 	it("dedupes same-args calls - including CONCURRENT independent steps", async () => {
 		const { tools, counts } = makeTools();
-		const engine = scriptEngine({ tools });
+		const engine = callscript({ tools });
 		const result = await engine.run(
 			{
 				script: {
@@ -63,7 +63,7 @@ describe("idempotent tool memoization", () => {
 
 	it("non-idempotent tools always dispatch", async () => {
 		const { tools, counts } = makeTools();
-		const engine = scriptEngine({ tools });
+		const engine = callscript({ tools });
 		await engine.run(
 			{
 				script: {
@@ -86,7 +86,7 @@ describe("idempotent tool memoization", () => {
 
 	it("the memo table rides the scope - runs sharing a scope share it", async () => {
 		const { tools, counts } = makeTools();
-		const engine = scriptEngine({ tools });
+		const engine = callscript({ tools });
 		const scope = engine.scope();
 		const script = {
 			steps: [{ id: "a", call: "svc.lookup", args: { id: "x" }, reason: "r" }],
@@ -111,7 +111,7 @@ describe("idempotent tool memoization", () => {
 
 	it("without a scope there is no table - every run dispatches", async () => {
 		const { tools, counts } = makeTools();
-		const engine = scriptEngine({ tools });
+		const engine = callscript({ tools });
 		const script = {
 			steps: [{ id: "a", call: "svc.lookup", args: { id: "x" }, reason: "r" }],
 		};
@@ -131,7 +131,7 @@ describe("idempotent tool memoization", () => {
 				return "ok";
 			},
 		});
-		const engine = scriptEngine({ tools: [flaky] });
+		const engine = callscript({ tools: [flaky] });
 		const scope = engine.scope();
 		const script = {
 			steps: [{ id: "a", call: "svc.flaky", args: { id: "x" }, reason: "r" }],
@@ -145,7 +145,7 @@ describe("idempotent tool memoization", () => {
 
 	it("the tool card advertises idempotence", () => {
 		const { tools } = makeTools();
-		const engine = scriptEngine({ tools });
+		const engine = callscript({ tools });
 		const text = engine.describe();
 		expect(text).toContain("svc.lookup({ id: string })");
 		expect(text).toMatch(

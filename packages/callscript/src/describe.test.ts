@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { previewValue, renderJsonSchemaType, toolCard } from "./describe";
-import { scriptEngine } from "./engine";
+import { callscript } from "./engine";
 import { tool } from "./tool";
 
 /* ------------------------------- fixtures -------------------------------- */
@@ -41,7 +41,7 @@ const makeEngine = (
 			closed: args.number,
 		}),
 	});
-	return scriptEngine({ tools: [listIssues, closeIssue], ...opts });
+	return callscript({ tools: [listIssues, closeIssue], ...opts });
 };
 
 /* ------------------------------ type rendering ---------------------------- */
@@ -199,7 +199,7 @@ describe("engine.describe", () => {
 			},
 			{ description: "close every stale issue in a repo" },
 		);
-		const outer = scriptEngine({ tools: [closeStale] });
+		const outer = callscript({ tools: [closeStale] });
 		expect(outer.describe()).toContain("issues.closeStale()");
 		expect(outer.describe()).toContain("close every stale issue in a repo");
 	});
@@ -246,7 +246,7 @@ describe("engine.toolDefinition", () => {
 	});
 
 	it("renders against the engine's limits and reason rule", () => {
-		const def = scriptEngine({
+		const def = callscript({
 			tools: [],
 			requireReason: true,
 			limits: { maxSteps: 7, maxItemsPerStep: 3 },

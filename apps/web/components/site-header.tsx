@@ -1,34 +1,28 @@
 import Link from "next/link";
 
-/** The TypeScript-mark homage: a white rounded square with "CS" set
- * low and right of center, where the TS logo puts its letters. */
-export function Logo({ size = 22 }: { size?: number }) {
+/** Vercel triangle mark. */
+function VercelMark({ size = 18 }: { size?: number }) {
 	return (
 		<svg
-			width={size}
 			height={size}
-			viewBox="0 0 128 128"
+			width={size}
+			viewBox="0 0 16 16"
+			strokeLinejoin="round"
 			aria-hidden="true"
 			className="shrink-0"
 		>
-			<rect width="128" height="128" rx="12" fill="#e8e8e8" />
-			<text
-				x="76"
-				y="100"
-				textAnchor="middle"
-				fontFamily="'Segoe UI', 'Helvetica Neue', Arial, sans-serif"
-				fontWeight="700"
-				fontSize="62"
-				fill="#0a0a0a"
-			>
-				CS
-			</text>
+			<path
+				fillRule="evenodd"
+				clipRule="evenodd"
+				d="M8 1L16 15H0L8 1Z"
+				fill="currentColor"
+			/>
 		</svg>
 	);
 }
 
-/** Minimal sticky nav shared by the readme and the playground: the logo on
- * the left, the page links and GitHub link on the right. */
+/** Vercel Labs header: sticky, blurred page background, the triangle
+ * linking to vercel.com, a slash divider, and the project wordmark. */
 export function SiteHeader({
 	github,
 	active,
@@ -42,7 +36,7 @@ export function SiteHeader({
 			aria-current={active === label ? "page" : undefined}
 			className={
 				active === label
-					? "text-ink underline decoration-current decoration-2 underline-offset-4"
+					? "text-ink"
 					: "text-dim transition-colors hover:text-ink"
 			}
 		>
@@ -51,23 +45,59 @@ export function SiteHeader({
 	);
 
 	return (
-		<header className="sticky top-0 z-20">
-			<nav className="flex items-center justify-between px-6 py-3 sm:px-10">
-				<Link
-					href="/"
-					aria-label="callscript home"
-					className="-ml-4 inline-flex items-center transition-opacity hover:opacity-80"
-				>
-					<Logo />
-				</Link>
-				<div className="flex items-center gap-5 text-[13px]">
+		<header className="sticky top-0 z-50 bg-bg/90 backdrop-blur-sm">
+			<nav className="flex h-14 items-center justify-between px-4 sm:px-6">
+				<div className="flex items-center gap-2">
+					<a
+						title="Made with love by Vercel"
+						href="https://vercel.com"
+						className="text-ink"
+					>
+						<VercelMark />
+					</a>
+					<span aria-hidden className="text-line">
+						<svg
+							height="16"
+							width="16"
+							viewBox="0 0 16 16"
+							strokeLinejoin="round"
+							aria-hidden="true"
+						>
+							<path
+								fillRule="evenodd"
+								clipRule="evenodd"
+								d="M4.01526 15.3939L4.3107 14.7046L10.3107 0.704556L10.6061 0.0151978L11.9849 0.606077L11.6894 1.29544L5.68942 15.2954L5.39398 15.9848L4.01526 15.3939Z"
+								fill="currentColor"
+							/>
+						</svg>
+					</span>
+					<Link
+						href="/"
+						aria-label="CallScript home"
+						className="font-mono text-lg font-medium tracking-tight text-ink"
+					>
+						CallScript
+					</Link>
+				</div>
+				<div className="flex items-center gap-4 text-sm">
 					{link("/", "readme")}
 					{link("/playground", "playground")}
 					<a
 						href={github}
-						className="text-dim transition-colors hover:text-ink"
+						target="_blank"
+						rel="noopener noreferrer"
+						className="flex items-center gap-1.5 text-dim transition-colors hover:text-ink"
 					>
-						Github
+						<svg
+							viewBox="0 0 16 16"
+							width="16"
+							height="16"
+							fill="currentColor"
+							aria-hidden="true"
+						>
+							<path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z" />
+						</svg>
+						<span className="hidden sm:inline">GitHub</span>
 					</a>
 				</div>
 			</nav>

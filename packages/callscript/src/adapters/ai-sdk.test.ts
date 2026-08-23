@@ -1,7 +1,7 @@
 import { tool as aiTool } from "ai";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import { scriptEngine } from "../engine";
+import { callscript } from "../engine";
 import { fromAISDKTools } from "./ai-sdk";
 
 /* ------------------------------- fixtures -------------------------------- */
@@ -38,7 +38,7 @@ const makeToolSet = () => {
 describe("fromAISDKTools", () => {
 	it("record keys become the registry names", () => {
 		const { set } = makeToolSet();
-		const engine = scriptEngine({ tools: fromAISDKTools(set) });
+		const engine = callscript({ tools: fromAISDKTools(set) });
 		expect(engine.tools.sort()).toEqual([
 			"github.closeIssue",
 			"github.listIssues",
@@ -47,7 +47,7 @@ describe("fromAISDKTools", () => {
 
 	it("runs a script end to end through AI SDK executes", async () => {
 		const { set, closed } = makeToolSet();
-		const engine = scriptEngine({ tools: fromAISDKTools(set) });
+		const engine = callscript({ tools: fromAISDKTools(set) });
 		const result = await engine.run({
 			script: {
 				steps: [
@@ -71,7 +71,7 @@ describe("fromAISDKTools", () => {
 
 	it("validates args against the tool's schema before execute fires", async () => {
 		const { set, closed } = makeToolSet();
-		const engine = scriptEngine({ tools: fromAISDKTools(set) });
+		const engine = callscript({ tools: fromAISDKTools(set) });
 		const result = await engine.run({
 			script: {
 				steps: [
@@ -88,7 +88,7 @@ describe("fromAISDKTools", () => {
 
 	it("renders tool cards from the zod schemas", () => {
 		const { set } = makeToolSet();
-		const engine = scriptEngine({ tools: fromAISDKTools(set) });
+		const engine = callscript({ tools: fromAISDKTools(set) });
 		const text = engine.describe();
 		expect(text).toContain(
 			'github.listIssues({ repo: string, state?: "open" | "closed" })',
@@ -103,7 +103,7 @@ describe("fromAISDKTools", () => {
 				"github.listIssues": { idempotent: true, errors: ["rate_limited"] },
 			},
 		});
-		const engine = scriptEngine({ tools });
+		const engine = callscript({ tools });
 		const text = engine.describe();
 		expect(text).toMatch(/github\.listIssues.*\n.*\n\s+errors: rate_limited/);
 		expect(text).toContain("idempotent (same args -> one call per session)");
@@ -116,7 +116,7 @@ describe("fromAISDKTools", () => {
 				execute: async () => "pong",
 			}),
 		};
-		const engine = scriptEngine({
+		const engine = callscript({
 			tools: fromAISDKTools(flat, { namespace: "net" }),
 		});
 		expect(engine.tools).toEqual(["net.ping"]);
@@ -133,7 +133,7 @@ describe("fromAISDKTools", () => {
 		const b = {
 			go: aiTool({ inputSchema: z.object({}), execute: async () => 2 }),
 		};
-		const engine = scriptEngine({
+		const engine = callscript({
 			tools: [
 				...fromAISDKTools(a, { namespace: "alpha" }),
 				...fromAISDKTools(b, { namespace: "beta" }),
@@ -148,7 +148,7 @@ describe("fromAISDKTools", () => {
 			namespace: "gh",
 			overrides: { "github.listIssues": { idempotent: true } },
 		});
-		const engine = scriptEngine({ tools });
+		const engine = callscript({ tools });
 		expect(engine.describe()).toMatch(
 			/gh\.github\.listIssues[\s\S]*?idempotent/,
 		);
@@ -173,7 +173,7 @@ describe("fromAISDKTools", () => {
 				},
 			}),
 		};
-		const engine = scriptEngine({ tools: fromAISDKTools(probe) });
+		const engine = callscript({ tools: fromAISDKTools(probe) });
 		await engine.run({
 			script: {
 				steps: [{ id: "fan", call: "probe", each: "[{ n: 1 }, { n: 2 }]" }],

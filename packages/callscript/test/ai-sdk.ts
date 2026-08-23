@@ -9,7 +9,7 @@
 import { generateText, tool } from "ai";
 import { z } from "zod";
 import { fromAISDKTools } from "../src/adapters/ai-sdk.ts";
-import { scriptEngine } from "../src/index.ts";
+import { callscript } from "../src/index.ts";
 
 /* a toy tool set - exactly what you would hand generateText's `tools` */
 
@@ -44,7 +44,7 @@ const post = tool({
 	},
 });
 
-const engine = scriptEngine({
+const engine = callscript({
 	tools: fromAISDKTools({
 		"github.listIssues": listIssues,
 		"github.closeIssue": closeIssue,

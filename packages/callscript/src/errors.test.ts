@@ -6,10 +6,10 @@
 import { describe, expect, it } from "vitest";
 import {
 	type CallRequest,
-	executeScript,
 	ScriptValidationError,
 	validateScript,
 } from "./index";
+import { executeScript } from "./execute";
 
 const issuesOf = (fn: () => unknown): string => {
 	try {

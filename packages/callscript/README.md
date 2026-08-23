@@ -18,10 +18,10 @@ Mount your AI SDK tools on an engine and hand the model the ready-made tool pair
 
 ```ts
 import { generateText } from "ai";
-import { scriptEngine } from "callscript";
+import { callscript } from "callscript";
 import { toAISDKTools, fromAISDKTools } from "callscript/ai-sdk";
 
-const engine = scriptEngine({
+const engine = callscript({
 	tools: fromAISDKTools(tools, { namespace: "github" }),
 });
 
@@ -121,7 +121,7 @@ Every engine carries hard limits: validation enforces them before a run starts, 
 | `maxCallResultBytes` | 10 MiB | serialized size of a single call's result |
 | `maxSuspendAttempts` | 5 | times one suspension key may re-raise before failing |
 
-Override any subset: `scriptEngine({ tools, limits: { maxTotalCalls: 50 } })`.
+Override any subset: `callscript({ tools, limits: { maxTotalCalls: 50 } })`.
 
 ## Adapters
 
@@ -131,10 +131,9 @@ The engine is **adapter-based**. It never knows where a tool came from; everythi
 { name, description?, inputSchema?, outputSchema?, errors?, idempotent?, execute(args, ctx) }
 ```
 
-so you can use callscript purely with the AI SDK, with better-tools, with plain object literals, or any mix:
+so you can use callscript purely with the AI SDK, with plain object literals, or any mix:
 
 - **`callscript/ai-sdk`**: hand it the same `tools` record you'd give `generateText`/`streamText`
-- **`callscript/better-tools`**: mount a better-tools instance (structural: `definitions` + `call`)
 - **`callscript/eve`**: the engine's `execute`/`search` pair as ready-made [eve](https://github.com/vercel/eve) agent tools
 - **plain literals**: a `{ name, execute }` object is already a tool; the `tool()` helper pins the literals for typed authoring
 
@@ -145,7 +144,7 @@ AI SDK in, AI SDK out: you never hand-write a script. Define tools with the SDK'
 ```ts
 import { generateText, tool } from "ai";
 import { z } from "zod";
-import { scriptEngine } from "callscript";
+import { callscript } from "callscript";
 import { toAISDKTools, fromAISDKTools } from "callscript/ai-sdk";
 
 // the same `tool()` objects you'd hand generateText directly
@@ -160,7 +159,7 @@ const closeIssue = tool({
 	execute: async ({ number }) => ({ closed: number }),
 });
 
-const engine = scriptEngine({
+const engine = callscript({
 	// the whole record mounts at once, however many tools it holds;
 	// `namespace` prefixes the keys: github.listIssues, github.closeIssue
 	tools: fromAISDKTools({ listIssues, closeIssue }, { namespace: "github" }),
@@ -228,21 +227,11 @@ export { search as default } from "../../lib/callscript";
 
 The agent authors scripts through `execute` and discovers mounted tools through `search`, instead of carrying every tool card in its prompt. Options are `engine.agentTools`'s (`scope`, `inlineTools`, `names`); in eve the filename decides the model-facing name, so keep `names` in step with the files. A `defineDynamic` tools file can also serve the pair from one slot by returning the record as-is.
 
-## With better-tools
-
-```ts
-import { scriptEngine } from "callscript";
-import { betterTools } from "callscript/better-tools";
-
-const engine = scriptEngine({ tools: betterTools(t /* createTools() instance */) });
-```
-
-Dispatch goes through `instance.call`, so hooks, mounted vars, and context seeds apply as usual. Failures translate structurally: a declared refusal's `tag` becomes the step error's machine-readable `code`, a contract violation comes out as `invalid_tool_args`, and a defect-wrapped `earlyReturn`/`suspend` is unwrapped back into the engine signal.
 
 ## With plain tools
 
 ```ts
-import { scriptEngine, tool } from "callscript";
+import { callscript, tool } from "callscript";
 
 const closeIssue = tool({
 	name: "github.closeIssue",
@@ -252,7 +241,7 @@ const closeIssue = tool({
 	execute: (args: { repo: string; number: number }) => ({ closed: args.number }),
 });
 
-const engine = scriptEngine({ tools: [closeIssue] });
+const engine = callscript({ tools: [closeIssue] });
 ```
 
 Throw protocol from `execute`: throw to fail the step (a string `code` on the error surfaces as the step error's code), `throw earlyReturn(value)` to end the run here, `throw suspend({ key, ... })` to park it on an external event.
@@ -348,7 +337,7 @@ engine.script({
 
 The arrow's parameter is the **scope contract**: a plain destructuring naming everything the body reads (`input` and `$calls` included; aliases allowed; the key is the env name). The body must be a single expression in the same grammar as the strings, and a free name, including a captured outer variable (the thing a native closure could otherwise smuggle in), is rejected at the door. What's stored, hashed, rendered, and re-executed is always the string form, so the script stays inert data.
 
-The language core (the pure-JS expression subset, static validation, limits, records, reconciliation, the runner) is engine-independent and re-exported, so `validateScript` / `executeScript` / `createRunner` remain usable standalone with hand-written handlers.
+The language core (the pure-JS expression subset, static validation, limits, records, reconciliation, the runner) is engine-independent - `parseJsScript` and `validateScript` are usable standalone, and the engine is the door onto the rest.
 
 ## Examples
 

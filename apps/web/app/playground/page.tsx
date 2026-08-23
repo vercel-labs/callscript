@@ -5,9 +5,9 @@ import { SiteHeader } from "@/components/site-header";
 const GITHUB = "https://github.com/better-auth/callscript";
 
 export const metadata: Metadata = {
-	title: "callscript playground",
+	title: "CallScript playground",
 	description:
-		"Write a callscript and run it against the real engine, in your browser: demo tools mounted, plans validated before anything fires.",
+		"Write a CallScript and run it against the real engine, in your browser: demo tools mounted, plans validated before anything fires.",
 };
 
 export default function PlaygroundPage() {

@@ -18,7 +18,7 @@ export function CopyButton({ text }: { text: string }) {
 			type="button"
 			onClick={copy}
 			aria-label="copy code"
-			className={`absolute top-2.5 right-2.5 border border-line bg-raise p-1.5 opacity-0 transition-opacity focus-visible:opacity-100 group-hover:opacity-100 ${
+			className={`absolute top-2.5 right-2.5 rounded-md border border-line bg-raise p-1.5 opacity-0 transition-opacity focus-visible:opacity-100 group-hover:opacity-100 ${
 				copied ? "text-ink" : "text-faint hover:text-ink"
 			}`}
 		>

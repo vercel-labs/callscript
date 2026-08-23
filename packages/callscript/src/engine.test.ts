@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { earlyReturn, scriptEngine, suspend } from "./engine";
+import { earlyReturn, callscript, suspend } from "./engine";
 import { tool } from "./tool";
 import { ScriptValidationError } from "./validate";
 
@@ -65,7 +65,7 @@ const tools = [listIssues, closeIssue, login, whoami, charge] as const;
 
 describe("the tool registry", () => {
 	it("tools are the mounted tools' names", () => {
-		const engine = scriptEngine({ tools });
+		const engine = callscript({ tools });
 		expect(engine.tools.sort()).toEqual(
 			[
 				"issues.list",
@@ -78,7 +78,7 @@ describe("the tool registry", () => {
 	});
 
 	it("a call naming no mounted tool fails validation, not dispatch", () => {
-		const engine = scriptEngine({ tools });
+		const engine = callscript({ tools });
 		expect(() =>
 			engine.run({
 				script: { steps: [{ call: "github.listIssues", args: {} }] },
@@ -89,13 +89,13 @@ describe("the tool registry", () => {
 	it("two different tools under one name are rejected at engine creation", () => {
 		const a = tool({ name: "dup.name", execute: () => 1 });
 		const b = tool({ name: "dup.name", execute: () => 2 });
-		expect(() => scriptEngine({ tools: [a, b] })).toThrow(
+		expect(() => callscript({ tools: [a, b] })).toThrow(
 			/share the name "dup\.name"/,
 		);
 	});
 
 	it("the SAME tool mounted twice is fine", () => {
-		expect(scriptEngine({ tools: [listIssues, listIssues] }).tools).toEqual([
+		expect(callscript({ tools: [listIssues, listIssues] }).tools).toEqual([
 			"issues.list",
 		]);
 	});
@@ -103,7 +103,7 @@ describe("the tool registry", () => {
 
 describe("dispatch through the tool door", () => {
 	it("runs a script end to end", async () => {
-		const engine = scriptEngine({ tools });
+		const engine = callscript({ tools });
 		const result = await engine.run({
 			script: {
 				steps: [
@@ -138,7 +138,7 @@ describe("dispatch through the tool door", () => {
 				return args.n;
 			},
 		});
-		const engine = scriptEngine({ tools: [probe] });
+		const engine = callscript({ tools: [probe] });
 		await engine.run({
 			script: {
 				steps: [
@@ -158,7 +158,7 @@ describe("dispatch through the tool door", () => {
 	});
 
 	it("each fans out, one call per element", async () => {
-		const engine = scriptEngine({ tools });
+		const engine = callscript({ tools });
 		const result = await engine.run({
 			script: {
 				steps: [
@@ -182,7 +182,7 @@ describe("dispatch through the tool door", () => {
 
 describe("scope vars across steps", () => {
 	it("a var set by one step's tool is read by the next - one run, one scope", async () => {
-		const engine = scriptEngine({ tools });
+		const engine = callscript({ tools });
 		const result = await engine.run(
 			{
 				script: {
@@ -201,7 +201,7 @@ describe("scope vars across steps", () => {
 	});
 
 	it("a tool needing scope state fails its step when nothing set it", async () => {
-		const engine = scriptEngine({ tools });
+		const engine = callscript({ tools });
 		const result = await engine.run(
 			{ script: { steps: [{ id: "me", call: "auth.whoami" }] } },
 			engine.scope(),
@@ -213,7 +213,7 @@ describe("scope vars across steps", () => {
 	});
 
 	it("scope(seed) seeds the vars for the whole run", async () => {
-		const engine = scriptEngine({ tools });
+		const engine = callscript({ tools });
 		const scope = engine.scope({ cs_user: { id: "u9", name: "Grace" } });
 		const result = await engine.run(
 			{ script: { steps: [{ id: "me", call: "auth.whoami" }] } },
@@ -226,7 +226,7 @@ describe("scope vars across steps", () => {
 	});
 
 	it("seeded vars are readable from expressions", async () => {
-		const engine = scriptEngine({ tools });
+		const engine = callscript({ tools });
 		const scope = engine.scope({ cs_user: { id: "u1", name: "Ada" } });
 		const result = await engine.run(
 			{ script: { steps: [{ id: "name", let: "cs_user.name" }] } },
@@ -239,7 +239,7 @@ describe("scope vars across steps", () => {
 
 describe("errors and signals", () => {
 	it("a thrown error's code becomes the step error code", async () => {
-		const engine = scriptEngine({ tools });
+		const engine = callscript({ tools });
 		const result = await engine.run({
 			script: { steps: [{ call: "pay.charge", args: { amount: 100 } }] },
 		});
@@ -250,7 +250,7 @@ describe("errors and signals", () => {
 	});
 
 	it("onError skip turns a refusal into undefined and continues", async () => {
-		const engine = scriptEngine({ tools });
+		const engine = callscript({ tools });
 		const result = await engine.run({
 			script: {
 				steps: [
@@ -277,7 +277,7 @@ describe("errors and signals", () => {
 				throw earlyReturn({ kind: "link", url: "https://auth/dev" });
 			},
 		});
-		const engine = scriptEngine({ tools: [device] });
+		const engine = callscript({ tools: [device] });
 		const result = await engine.run({
 			script: { steps: [{ id: "link", call: "auth.device" }] },
 		});
@@ -301,7 +301,7 @@ describe("errors and signals", () => {
 				return { ok: args.code === "42" };
 			},
 		});
-		const engine = scriptEngine({ tools: [verify] });
+		const engine = callscript({ tools: [verify] });
 		const script = {
 			steps: [
 				{ id: "check", call: "otp.verify", args: { code: "=input.code" } },
@@ -325,7 +325,7 @@ describe("errors and signals", () => {
 
 describe("options threaded to the engine", () => {
 	it("requireReason rejects call steps without one", () => {
-		const engine = scriptEngine({ tools, requireReason: true });
+		const engine = callscript({ tools, requireReason: true });
 		expect(() =>
 			engine.run({
 				script: { steps: [{ call: "issues.list", args: { repo: "api" } }] },
@@ -334,7 +334,7 @@ describe("options threaded to the engine", () => {
 	});
 
 	it("limits apply (maxSteps)", () => {
-		const engine = scriptEngine({ tools, limits: { maxSteps: 1 } });
+		const engine = callscript({ tools, limits: { maxSteps: 1 } });
 		expect(() =>
 			engine.run({
 				script: {
@@ -348,7 +348,7 @@ describe("options threaded to the engine", () => {
 	});
 
 	it("analyze and render work off the validated script", () => {
-		const engine = scriptEngine({ tools });
+		const engine = callscript({ tools });
 		const script = engine.validate({
 			steps: [
 				{
@@ -366,7 +366,7 @@ describe("options threaded to the engine", () => {
 
 describe("sessions", () => {
 	it("published variables flow between runs, validated at the door", async () => {
-		const engine = scriptEngine({ tools });
+		const engine = callscript({ tools });
 		const sess = engine.session();
 
 		const first = await sess.start({
@@ -385,7 +385,7 @@ describe("sessions", () => {
 	});
 
 	it("a session handed a scope shares its vars across runs", async () => {
-		const engine = scriptEngine({ tools });
+		const engine = callscript({ tools });
 		const scope = engine.scope();
 		const sess = engine.session({}, scope);
 
@@ -416,7 +416,7 @@ describe("sessions", () => {
 				return { report: "done" };
 			},
 		});
-		const engine = scriptEngine({ tools: [slow, listIssues] });
+		const engine = callscript({ tools: [slow, listIssues] });
 		const sess = engine.session({ deadlineMs: 0 });
 
 		const started = await sess.start({

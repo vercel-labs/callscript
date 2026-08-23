@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { searchTools } from "./describe";
-import { scriptEngine, suspend } from "./engine";
+import { callscript, suspend } from "./engine";
 import { tool } from "./tool";
 
 /* ------------------------------- fixtures -------------------------------- */
@@ -28,7 +28,7 @@ const post = tool({
 	execute: (_args: { channel: string; text: string }) => ({ ok: true }),
 });
 
-const engine = () => scriptEngine({ tools: [listIssues, closeIssue, post] });
+const engine = () => callscript({ tools: [listIssues, closeIssue, post] });
 
 /* ------------------------------ searchTools ------------------------------- */
 
@@ -123,7 +123,7 @@ describe("engine.agentTools", () => {
 				return { ok: true };
 			},
 		});
-		const e = scriptEngine({ tools: [gate] });
+		const e = callscript({ tools: [gate] });
 		const scope = e.scope();
 		const { execute } = e.agentTools({ scope });
 		const script = {

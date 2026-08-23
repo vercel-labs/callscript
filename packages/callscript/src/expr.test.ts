@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { collectRefs, ExprError, evalExpr, parseExpr } from "./index";
+import { evalExpr } from "./expr/eval";
+import { collectRefs, ExprError, parseExpr } from "./expr/parse";
 
 const env = {
 	issues: [

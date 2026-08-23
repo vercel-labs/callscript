@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { scriptEngine } from "./engine";
+import { callscript } from "./engine";
 import { parseJsScript } from "./js";
 import { tool } from "./tool";
 import type { CallStep, LetStep, ReturnStep } from "./types";
@@ -384,7 +384,7 @@ describe("teaching rejections", () => {
 				throw new Error("must not run");
 			},
 		});
-		const engine = scriptEngine({ tools: [zero, boom] });
+		const engine = callscript({ tools: [zero, boom] });
 		const result = await engine.run({
 			script: `
 				const c = await t.count({});
@@ -452,7 +452,7 @@ describe("through validateScript and the engine", () => {
 	});
 
 	it("engine.run executes a JS-surface script end to end", async () => {
-		const engine = scriptEngine({ tools: [listIssues, closeIssue] });
+		const engine = callscript({ tools: [listIssues, closeIssue] });
 		const result = await engine.run({
 			script: `
 				// close stale issues
@@ -471,7 +471,7 @@ describe("through validateScript and the engine", () => {
 	});
 
 	it("the js agent tool pair unwraps { script } and reports issues for retry", async () => {
-		const engine = scriptEngine({ tools: [listIssues, closeIssue] });
+		const engine = callscript({ tools: [listIssues, closeIssue] });
 		const { execute } = engine.agentTools();
 		expect(execute.inputSchema).toMatchObject({
 			type: "object",
@@ -495,7 +495,7 @@ describe("through validateScript and the engine", () => {
 	});
 
 	it("format: 'json' keeps the JSON teaching surface", () => {
-		const engine = scriptEngine({
+		const engine = callscript({
 			tools: [listIssues, closeIssue],
 			format: "json",
 		});

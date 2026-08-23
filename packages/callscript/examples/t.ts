@@ -1,4 +1,4 @@
-import { scriptEngine, tool } from "../src/index.ts";
+import { callscript, tool } from "../src/index.ts";
 
 const listIssues = tool({
 	name: "github.listIssues",
@@ -44,7 +44,7 @@ const closeIssue = tool({
 	}),
 });
 
-const engine = scriptEngine({
+const engine = callscript({
 	tools: [listIssues, closeIssue],
 	requireReason: true,
 });

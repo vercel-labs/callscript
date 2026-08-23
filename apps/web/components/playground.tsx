@@ -10,7 +10,7 @@ import {
 	type Script,
 	type ScriptLimits,
 	ScriptValidationError,
-	scriptEngine,
+	callscript,
 	type ToolCallContext,
 } from "callscript";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -573,7 +573,7 @@ const VIEWS: { key: InputTab; label: string }[] = [
 type OutputTab = "converted" | "run";
 
 /** The engine-wide limits surfaced by the config footer: every edit
- * feeds `scriptEngine({ limits })`, so the validator, the system prompt
+ * feeds `callscript({ limits })`, so the validator, the system prompt
  * and the next run all enforce it immediately. */
 const LIMIT_FIELDS: { key: keyof ScriptLimits; label: string }[] = [
 	{ key: "maxSteps", label: "max steps" },
@@ -641,7 +641,7 @@ type Outcome =
 			tokens: number;
 	  };
 
-const OK = "text-emerald-600 dark:text-emerald-400";
+const OK = "text-blue-600 dark:text-blue-400";
 const BAD = "text-red-600 dark:text-red-400";
 
 /** The model is told to reply with bare source, but strip markdown
@@ -915,7 +915,7 @@ export function Playground() {
 		[mounted],
 	);
 	const engine = useMemo(
-		() => scriptEngine({ tools: countedTools, limits }),
+		() => callscript({ tools: countedTools, limits }),
 		[countedTools, limits],
 	);
 	// SESSION MEMORY as run-id metadata, not replay: each run gets a
@@ -999,7 +999,7 @@ export function Playground() {
 	// left out of the prompt; the agent reaches them through its
 	// AI-SDK-level search tool (see /api/generate)
 	const promptEngine = useMemo(
-		() => scriptEngine({ tools: mounted.filter((t) => t.pinned), limits }),
+		() => callscript({ tools: mounted.filter((t) => t.pinned), limits }),
 		[mounted, limits],
 	);
 	const systemPrompt = useMemo(() => promptEngine.describe(), [promptEngine]);
@@ -1598,7 +1598,7 @@ export function Playground() {
 						<ViewSelect
 							value={approach}
 							options={[
-								{ key: "callscript", label: "callscript" },
+								{ key: "callscript", label: "CallScript" },
 								{ key: "traditional", label: "traditional" },
 								{ key: "codemode", label: "code mode" },
 							]}
@@ -1672,7 +1672,7 @@ export function Playground() {
 										approach === "codemode" ? runCode() : run()
 									}
 									lang="javascript"
-									label="callscript source (javascript)"
+									label="CallScript source (javascript)"
 								/>
 							</div>
 						)}
