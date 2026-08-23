@@ -21,7 +21,7 @@
  * `{ execute, search }` as-is.
  */
 import { defineTool } from "eve/tools";
-import type { AgentTool, AgentToolsOptions } from "../engine";
+import type { AgentTool, ToolsOptions } from "../engine";
 
 /** eve's (unexported) JSON schema shape, mirrored structurally - the
  * pair's schemas are plain JSON data, so the assertion only bridges the
@@ -36,31 +36,35 @@ type JsonValue =
 
 /** The slice of an engine `toEveTools` reads - structural, so it takes
  * any engine without importing the full type. */
-type AgentToolsHost = {
-	agentTools(options?: AgentToolsOptions): {
+type ToolsHost = {
+	tools(options?: ToolsOptions): {
 		execute: AgentTool;
 		search: AgentTool;
+		describe: AgentTool;
 	};
 };
 
 /**
  * The engine as eve agent tools: `execute` runs one script against a
  * shared session scope (invalid scripts return their issues for the
- * model to retry), `search` finds mounted tools by keyword. Both are
- * branded `defineTool` results - export each as the default of its
- * `agent/tools/` file. `options` is `engine.agentTools`'s: `scope`
- * joins an existing session, `inlineTools` moves the cards behind
- * `search`, `names` renames the pair (the filename still decides the
- * model-facing name in eve - keep them in step).
+ * model to retry); `search` finds mounted tools by keyword and
+ * `describe` renders their full signature cards, so the prompt never
+ * carries every tool definition ahead of time. All three are branded
+ * `defineTool` results - export each as the default of its
+ * `agent/tools/` file. `options` is `engine.tools`'s: `scope` joins an
+ * existing session, `inlineTools` moves the cards behind
+ * `search`/`describe`, `names` renames the trio (the filename still
+ * decides the model-facing name in eve - keep them in step).
  */
 export const toEveTools = (
-	engine: AgentToolsHost,
-	options?: AgentToolsOptions,
+	engine: ToolsHost,
+	options?: ToolsOptions,
 ): {
 	execute: ReturnType<typeof defineTool>;
 	search: ReturnType<typeof defineTool>;
+	describe: ReturnType<typeof defineTool>;
 } => {
-	const pair = engine.agentTools(options);
+	const trio = engine.tools(options);
 	const wrap = (t: AgentTool) =>
 		defineTool({
 			description: t.description,
@@ -68,5 +72,9 @@ export const toEveTools = (
 			inputSchema: t.inputSchema as { [key: string]: JsonValue },
 			execute: (input: unknown) => t.execute(input),
 		});
-	return { execute: wrap(pair.execute), search: wrap(pair.search) };
+	return {
+		execute: wrap(trio.execute),
+		search: wrap(trio.search),
+		describe: wrap(trio.describe),
+	};
 };

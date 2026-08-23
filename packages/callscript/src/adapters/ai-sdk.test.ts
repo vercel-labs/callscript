@@ -39,7 +39,7 @@ describe("fromAISDKTools", () => {
 	it("record keys become the registry names", () => {
 		const { set } = makeToolSet();
 		const engine = callscript({ tools: fromAISDKTools(set) });
-		expect(engine.tools.sort()).toEqual([
+		expect(engine.toolNames.sort()).toEqual([
 			"github.closeIssue",
 			"github.listIssues",
 		]);
@@ -100,13 +100,12 @@ describe("fromAISDKTools", () => {
 		const { set } = makeToolSet();
 		const tools = fromAISDKTools(set, {
 			overrides: {
-				"github.listIssues": { idempotent: true, errors: ["rate_limited"] },
+				"github.listIssues": { errors: ["rate_limited"] },
 			},
 		});
 		const engine = callscript({ tools });
 		const text = engine.describe();
 		expect(text).toMatch(/github\.listIssues.*\n.*\n\s+errors: rate_limited/);
-		expect(text).toContain("idempotent (same args -> one call per session)");
 	});
 
 	it("namespace prefixes every registry name", async () => {
@@ -119,7 +118,7 @@ describe("fromAISDKTools", () => {
 		const engine = callscript({
 			tools: fromAISDKTools(flat, { namespace: "net" }),
 		});
-		expect(engine.tools).toEqual(["net.ping"]);
+		expect(engine.toolNames).toEqual(["net.ping"]);
 		const result = await engine.run({
 			script: { steps: [{ id: "p", call: "net.ping", args: {} }] },
 		});
@@ -139,18 +138,18 @@ describe("fromAISDKTools", () => {
 				...fromAISDKTools(b, { namespace: "beta" }),
 			],
 		});
-		expect(engine.tools.sort()).toEqual(["alpha.go", "beta.go"]);
+		expect(engine.toolNames.sort()).toEqual(["alpha.go", "beta.go"]);
 	});
 
 	it("overrides stay keyed by the record's own keys under a namespace", () => {
 		const { set } = makeToolSet();
 		const tools = fromAISDKTools(set, {
 			namespace: "gh",
-			overrides: { "github.listIssues": { idempotent: true } },
+			overrides: { "github.listIssues": { errors: ["rate_limited"] } },
 		});
 		const engine = callscript({ tools });
 		expect(engine.describe()).toMatch(
-			/gh\.github\.listIssues[\s\S]*?idempotent/,
+			/gh\.github\.listIssues[\s\S]*?rate_limited/,
 		);
 	});
 

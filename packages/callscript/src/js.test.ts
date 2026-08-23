@@ -472,7 +472,7 @@ describe("through validateScript and the engine", () => {
 
 	it("the js agent tool pair unwraps { script } and reports issues for retry", async () => {
 		const engine = callscript({ tools: [listIssues, closeIssue] });
-		const { execute } = engine.agentTools();
+		const { execute } = engine.tools();
 		expect(execute.inputSchema).toMatchObject({
 			type: "object",
 			required: ["script"],
@@ -499,7 +499,7 @@ describe("through validateScript and the engine", () => {
 			tools: [listIssues, closeIssue],
 			format: "json",
 		});
-		const { execute } = engine.agentTools();
+		const { execute } = engine.tools();
 		expect(execute.inputSchema).toMatchObject({
 			properties: { steps: expect.anything() },
 		});

@@ -57,11 +57,11 @@ describe("searchTools", () => {
 	});
 });
 
-/* ---------------------------- engine.agentTools --------------------------- */
+/* ---------------------------- engine.tools --------------------------- */
 
-describe("engine.agentTools", () => {
+describe("engine.tools", () => {
 	it("exposes an execute/search pair with schemas and cards", () => {
-		const { execute, search } = engine().agentTools();
+		const { execute, search } = engine().tools();
 		expect(execute.name).toBe("execute");
 		expect(search.name).toBe("search");
 		// few tools mounted -> the cards inline into execute's description
@@ -71,7 +71,7 @@ describe("engine.agentTools", () => {
 	});
 
 	it("execute runs a script and strips session state from the result", async () => {
-		const { execute } = engine().agentTools();
+		const { execute } = engine().tools();
 		const result = await execute.execute({
 			steps: [
 				{ id: "issues", call: "github.listIssues", args: { repo: "api" } },
@@ -87,7 +87,7 @@ describe("engine.agentTools", () => {
 	});
 
 	it("execute returns every validation issue instead of throwing", async () => {
-		const { execute } = engine().agentTools();
+		const { execute } = engine().tools();
 		const result = await execute.execute({
 			steps: [
 				{ id: "a", call: "github.nope", args: {} },
@@ -102,7 +102,7 @@ describe("engine.agentTools", () => {
 	});
 
 	it("runs share the pair's scope: later scripts read earlier outputs", async () => {
-		const { execute } = engine().agentTools();
+		const { execute } = engine().tools();
 		const first = await execute.execute({
 			steps: [
 				{ id: "issues", call: "github.listIssues", args: { repo: "api" } },
@@ -125,7 +125,7 @@ describe("engine.agentTools", () => {
 		});
 		const e = callscript({ tools: [gate] });
 		const scope = e.scope();
-		const { execute } = e.agentTools({ scope });
+		const { execute } = e.tools({ scope });
 		const script = {
 			steps: [{ id: "v", call: "auth.verify", args: { code: "=input.code" } }],
 		};
@@ -136,29 +136,53 @@ describe("engine.agentTools", () => {
 		expect(resumed.status).toBe("ok");
 	});
 
-	it("search returns matching cards and a pointed miss message", async () => {
-		const { search } = engine().agentTools();
+	it("search returns names with summaries and a pointed miss message", async () => {
+		const { search } = engine().tools();
 		const hit = await search.execute({ query: "close issue" });
-		expect(hit).toContain("github.closeIssue");
-		expect(hit).toContain("close an issue by number");
+		expect(hit).toContain("github.closeIssue - close an issue by number");
+		expect(hit).toContain("`describe`");
 		const miss = await search.execute({ query: "kubernetes" });
 		expect(miss).toContain("no tools matched");
 	});
 
-	it("inlineTools: false moves the cards behind search", () => {
-		const { execute } = engine().agentTools({ inlineTools: false });
-		expect(execute.description).not.toContain("github.closeIssue");
-		expect(execute.description).toContain("`search`");
+	it("describe returns full cards for named tools, and flags unknown names", async () => {
+		const { describe: describeTool } = engine().tools();
+		const cards = await describeTool.execute({
+			names: ["github.closeIssue", "github.nope"],
+		});
+		expect(cards).toContain("github.closeIssue(");
+		expect(cards).toContain("close an issue by number");
+		expect(cards).toContain("github.nope - not mounted");
 	});
 
-	it("names carry through the pair and its cross-references", () => {
-		const { execute, search } = engine().agentTools({
+	it("inlineTools: false moves the cards behind search/describe", () => {
+		const { execute } = engine().tools({ inlineTools: false });
+		expect(execute.description).not.toContain("github.closeIssue");
+		expect(execute.description).toContain("`search`");
+		expect(execute.description).toContain("`describe`");
+	});
+
+	it("names carry through the trio and its cross-references", () => {
+		const {
+			execute,
+			search,
+			describe: describeTool,
+		} = engine().tools({
 			inlineTools: false,
-			names: { execute: "run_script", search: "find_tools" },
+			names: {
+				execute: "run_script",
+				search: "find_tools",
+				describe: "tool_cards",
+			},
 		});
 		expect(execute.name).toBe("run_script");
 		expect(search.name).toBe("find_tools");
+		expect(describeTool.name).toBe("tool_cards");
 		expect(execute.description).toContain("`find_tools`");
+		expect(execute.description).toContain("`tool_cards`");
 		expect(search.description).toContain("`run_script`");
+		expect(search.description).toContain("`tool_cards`");
+		expect(describeTool.description).toContain("`find_tools`");
+		expect(describeTool.description).toContain("`run_script`");
 	});
 });

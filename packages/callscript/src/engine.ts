@@ -12,8 +12,7 @@
  * - a script's `call` dispatches to the tool's `execute`; a thrown
  *   error's `code` surfaces as the step error's machine-readable code
  * - the SESSION is a plain scope object (`engine.scope()`): the run
- *   record accumulates on it, host-seeded vars are readable from
- *   expressions, and runs handed the same scope share all of it
+ *   record accumulates on it, and runs handed the same scope share it
  * - a script COMPILES into a tool (`engine.tool`): mountable on another
  *   engine, its session joined through the caller's scope - and its
  *   gates compose (an inner approval gate ends the hosting run early)
@@ -40,7 +39,6 @@ import {
 	publishedVariables,
 	ScriptExecutionError,
 	SuspendSignal,
-	stableStringify,
 } from "./execute";
 import { resolveFnExprs } from "./fn-expr";
 import {
@@ -94,7 +92,7 @@ export interface ScriptEngineOptions<TS extends readonly AnyScriptTool[]> {
 	 * executed) into the same inert plan - a fraction of the instruction.
 	 * "json": the model emits the JSON plan directly, taught field-by-field
 	 * through `scriptJsonSchema`. Execution accepts BOTH regardless - this
-	 * only decides what `describe`/`toolDefinition`/`agentTools` teach.
+	 * only decides what `describe`/`toolDefinition`/`tools` teach.
 	 */
 	format?: "js" | "json";
 }
@@ -161,17 +159,18 @@ export interface AgentTool<A = any, R = unknown> {
 	execute(args: A): Promise<R>;
 }
 
-export interface AgentToolsOptions {
-	/** The session scope runs execute against - state, vars, and the memo
-	 * table persist across `execute` calls (suspended runs resume here).
-	 * Default: a fresh scope minted per `agentTools()` call. */
+export interface ToolsOptions {
+	/** The session scope runs execute against - state persists across
+	 * `execute` calls (suspended runs resume here). Default: a fresh
+	 * scope minted per `tools()` call. */
 	scope?: ScriptScope;
 	/** Inline every tool card in the `execute` description. Default: true
-	 * up to 20 mounted tools; past that the cards move behind `search`,
-	 * so the prompt stays small and the model discovers tools as needed. */
+	 * up to 20 mounted tools; past that the cards move behind
+	 * `search`/`describe`, so the prompt stays small and the model loads
+	 * only the tools a script will call. */
 	inlineTools?: boolean;
-	/** Rename the pair (defaults: "execute" / "search"). */
-	names?: { execute?: string; search?: string };
+	/** Rename the trio (defaults: "execute" / "search" / "describe"). */
+	names?: { execute?: string; search?: string; describe?: string };
 	/** Override the engine's authoring `format` for this pair. */
 	format?: "js" | "json";
 }
@@ -191,23 +190,28 @@ export interface AgentSearchInput {
 	limit?: number;
 }
 
+export interface AgentDescribeInput {
+	/** Mounted tool names to render full signature cards for. */
+	names: string[];
+}
+
 export interface ScriptEngine<TS extends readonly AnyScriptTool[]> {
 	/** Execute one script (validated at the door). A `scope` makes it a
-	 * session run: state, vars, and the memo table ride the scope. */
+	 * session run: state rides the scope. */
 	run(input: RunInput, scope?: ScriptScope): Promise<ExecuteResult>;
 	/**
 	 * Mint a session scope - the session as a VALUE. Runs and compiled
-	 * tools handed it share vars AND the accumulated record, so
-	 * re-executing (approvals, suspensions) needs no state threading:
+	 * tools handed it share the accumulated record, so re-executing
+	 * (approvals, suspensions) needs no state threading:
 	 *
-	 *   const s = engine.scope({ user });
+	 *   const s = engine.scope();
 	 *   await engine.run({ script }, s);                            // gate fires
 	 *   await engine.run({ script, input: { approved: true } }, s); // resumes
 	 */
-	scope(seed?: Record<string, unknown>): ScriptScope;
+	scope(): ScriptScope;
 	/** Open a session: async runs, `await.<id>` joins, the settlement
 	 * digest, and an accumulated record every new run executes against.
-	 * A `scope` shares its vars with (and absorbs settlements into) it. */
+	 * A `scope` absorbs settlements into it. */
 	session(options?: SessionOptions, scope?: ScriptScope): SessionRunner;
 	/**
 	 * TYPED script authoring: `call` is the union of mounted tool names
@@ -226,7 +230,7 @@ export interface ScriptEngine<TS extends readonly AnyScriptTool[]> {
 		options?: { description?: string },
 	): CompiledScriptTool<K>;
 	/** The tool names scripts may call. */
-	tools: string[];
+	toolNames: string[];
 	/**
 	 * The STATIC prompt context for an authoring model: the language card
 	 * (rendered against this engine's limits) and one signature card per
@@ -249,23 +253,27 @@ export interface ScriptEngine<TS extends readonly AnyScriptTool[]> {
 		inputSchema: Record<string, unknown>;
 	};
 	/**
-	 * The engine as an agent TOOL PAIR, ready to mount on any host:
-	 * `execute` runs one script against a shared session scope (invalid
-	 * scripts come back as `status: "invalid"` with every issue, for the
-	 * model to retry; the session `state` stays on the scope, never in
-	 * the result), and `search` finds mounted tools by keyword, returning
-	 * their signature cards. With few tools `execute`'s description
-	 * inlines all the cards; past `inlineTools` the model discovers them
-	 * through `search` instead.
+	 * The engine as agent TOOLS, ready to mount on any host. `execute`
+	 * is the tool: it runs one script against a shared session scope
+	 * (invalid scripts come back as `status: "invalid"` with every
+	 * issue, for the model to retry; the session `state` stays on the
+	 * scope, never in the result). `search` and `describe` exist so the
+	 * prompt doesn't carry every tool definition ahead of time: `search`
+	 * finds mounted tools by keyword (names plus one-line summaries),
+	 * `describe` renders the full signature cards for the names a script
+	 * will actually call. With few tools `execute`'s description inlines
+	 * all the cards; past `inlineTools` the model discovers them through
+	 * `search`/`describe` instead.
 	 */
-	agentTools(options?: AgentToolsOptions): {
+	tools(options?: ToolsOptions): {
 		execute: AgentTool<unknown, AgentExecuteResult>;
 		search: AgentTool<AgentSearchInput, string>;
+		describe: AgentTool<AgentDescribeInput, string>;
 	};
 	/**
 	 * The LIVE prompt context: every name a script can reference in this
-	 * scope right now - step outputs published by prior runs, vars the
-	 * scope holds - with short value previews. Re-render per turn.
+	 * scope right now - step outputs published by prior runs - with
+	 * short value previews. Re-render per turn.
 	 */
 	context(scope?: ScriptScope): string;
 	/** Validate a script against the registry; throws with EVERY issue. */
@@ -325,13 +333,8 @@ export const callscript = <const TS extends readonly AnyScriptTool[]>(
 			: state;
 	};
 
-	/**
-	 * The one dispatcher: a resolved call goes to the tool whose name
-	 * matches. Idempotent tools are input-addressed: same name + same
-	 * resolved args -> ONE dispatch per scope, shared even between
-	 * concurrent steps (the memo holds the in-flight promise); failures
-	 * - including suspend/earlyReturn signals - never cache.
-	 */
+	/** The one dispatcher: a resolved call goes to the tool whose name
+	 * matches. */
 	const handlersFrom = (scope?: ScriptScope): ExecuteHandlers => ({
 		call: async (request, ctx) => {
 			const tool = registry.get(request.tool);
@@ -350,17 +353,7 @@ export const callscript = <const TS extends readonly AnyScriptTool[]>(
 				itemIndex: request.itemIndex,
 				scope,
 			};
-			const invoke = async () => tool.execute(request.args, callContext);
-			if (tool.idempotent !== true || scope === undefined) {
-				return invoke();
-			}
-			const key = `${request.tool}:${stableStringify(request.args)}`;
-			const hit = scope.memo.get(key);
-			if (hit !== undefined) return hit;
-			const pending = invoke();
-			scope.memo.set(key, pending);
-			pending.catch(() => scope.memo.delete(key));
-			return pending;
+			return tool.execute(request.args, callContext);
 		},
 	});
 
@@ -372,7 +365,7 @@ export const callscript = <const TS extends readonly AnyScriptTool[]>(
 	): Promise<ExecuteResult> => {
 		const { script, ...exec } = input ?? {};
 		const state = exec.state ?? scope?.state;
-		const variables = { ...scope?.vars, ...exec.variables };
+		const variables = { ...exec.variables };
 		const validated = validate(script, {
 			variables: referable(state, variables),
 		});
@@ -438,7 +431,7 @@ export const callscript = <const TS extends readonly AnyScriptTool[]>(
 		const execute = (args?: any, ctx?: Partial<ToolCallContext>) => {
 			const scope = ctx?.scope;
 			const state = scope?.state;
-			const variables = { ...scope?.vars };
+			const variables = {};
 			const script = validate(scriptInput, {
 				variables: referable(state, variables),
 			});
@@ -504,10 +497,7 @@ export const callscript = <const TS extends readonly AnyScriptTool[]>(
 			// accumulated session and the scope's vars are referable -
 			// captured at START time, not session creation.
 			start: async (script, startOpts) => {
-				const variables = {
-					...scope?.vars,
-					...startOpts?.variables,
-				};
+				const variables = { ...startOpts?.variables };
 				const result = await runner.start(
 					validate(script, {
 						tools: [...tools, "await.*"],
@@ -558,12 +548,13 @@ export const callscript = <const TS extends readonly AnyScriptTool[]>(
 					inputSchema: jsScriptInputSchema(),
 				};
 
-	/** The engine as an agent tool pair - see `ScriptEngine.agentTools`. */
-	const agentTools = (opts: AgentToolsOptions = {}) => {
+	/** The engine as agent tools - see `ScriptEngine.tools`. */
+	const agentTools = (opts: ToolsOptions = {}) => {
 		const scope = opts.scope ?? createScope();
 		const format = opts.format ?? engineFormat;
 		const executeName = opts.names?.execute ?? "execute";
 		const searchName = opts.names?.search ?? "search";
+		const describeName = opts.names?.describe ?? "describe";
 		const mounted = [...registry.values()];
 		const inline = opts.inlineTools ?? mounted.length <= 20;
 		const description = [
@@ -574,7 +565,8 @@ export const callscript = <const TS extends readonly AnyScriptTool[]>(
 				? engineSections().join("\n\n")
 				: `## tools\n${mounted.length} tools are mounted; a script may only ` +
 					`call mounted tools. Call \`${searchName}\` to find them by ` +
-					"keyword before authoring.",
+					`keyword, then \`${describeName}\` for the full signature ` +
+					"cards, before authoring.",
 		].join("\n\n");
 		const execute: AgentTool<unknown, AgentExecuteResult> = {
 			name: executeName,
@@ -627,8 +619,9 @@ export const callscript = <const TS extends readonly AnyScriptTool[]>(
 			description:
 				`Search the ${mounted.length} tools mounted on the script ` +
 				"engine by keyword, against names, descriptions, and " +
-				"signatures. Returns the matching signature cards - the " +
-				`tools a \`${executeName}\` script can call.`,
+				"signatures. Returns matching names with one-line summaries " +
+				`- the tools a \`${executeName}\` script can call. Pass the ` +
+				`names to \`${describeName}\` for full signature cards.`,
 			inputSchema: {
 				type: "object",
 				properties: {
@@ -654,10 +647,50 @@ export const callscript = <const TS extends readonly AnyScriptTool[]>(
 						"try broader keywords"
 					);
 				}
-				return matched.map((tool) => toolCard(tool)).join("\n");
+				const lines = matched.map((tool) => {
+					const summary = tool.description
+						?.trim()
+						.split("\n", 1)[0]
+						?.trim();
+					return summary ? `${tool.name} - ${summary}` : tool.name;
+				});
+				return (
+					lines.join("\n") +
+					`\n\ncall \`${describeName}\` with these names for full ` +
+					"signature cards"
+				);
 			},
 		};
-		return { execute, search };
+		const describeTool: AgentTool<AgentDescribeInput, string> = {
+			name: describeName,
+			description:
+				"Full signature cards - args, return shape, declared error " +
+				`codes - for named mounted tools. Use after \`${searchName}\` ` +
+				`to load only the tools your \`${executeName}\` script will ` +
+				"call, instead of every definition ahead of time.",
+			inputSchema: {
+				type: "object",
+				properties: {
+					names: {
+						type: "array",
+						items: { type: "string" },
+						description: "Mounted tool names to describe.",
+					},
+				},
+				required: ["names"],
+				additionalProperties: false,
+			},
+			execute: async ({ names }) =>
+				names
+					.map((name) => {
+						const mountedTool = registry.get(name);
+						return mountedTool
+							? toolCard(mountedTool)
+							: `${name} - not mounted (find names with \`${searchName}\`)`;
+					})
+					.join("\n"),
+		};
+		return { execute, search, describe: describeTool };
 	};
 
 	/** The live prompt context: what THIS scope's expressions can read. */
@@ -666,12 +699,7 @@ export const callscript = <const TS extends readonly AnyScriptTool[]>(
 		if (scope) {
 			const published = scope.state ? publishedVariables(scope.state) : {};
 			for (const [name, value] of Object.entries(published)) {
-				if (!(name in scope.vars)) {
-					entries.push({ name, value, source: "step" });
-				}
-			}
-			for (const [name, value] of Object.entries(scope.vars)) {
-				entries.push({ name, value, source: "var" });
+				entries.push({ name, value });
 			}
 		}
 		return sessionCard(entries);
@@ -683,14 +711,14 @@ export const callscript = <const TS extends readonly AnyScriptTool[]>(
 		session,
 		describe,
 		toolDefinition,
-		agentTools,
+		tools: agentTools,
 		context,
 		// Tolerant like compile: names no step produces are session
 		// EXTERNALS, not authoring errors - the run checks them against the
 		// live session it executes in.
 		script: (input: unknown) => compileValidate(input).script,
 		tool: compile as ScriptEngine<TS>["tool"],
-		tools,
+		toolNames: tools,
 		validate,
 		analyze: analyzeScript,
 		render: renderScript,

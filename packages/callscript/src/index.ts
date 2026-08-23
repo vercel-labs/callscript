@@ -6,10 +6,11 @@
 
 // the engine - mount tools, get the execute/search pair
 export {
+	type AgentDescribeInput,
 	type AgentExecuteResult,
 	type AgentSearchInput,
 	type AgentTool,
-	type AgentToolsOptions,
+	type ToolsOptions,
 	type CompiledScriptTool,
 	earlyReturn,
 	type RunInput,

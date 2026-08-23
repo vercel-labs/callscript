@@ -13,7 +13,7 @@ const MAX_TOOLS = 200;
  * user's prompt, the pinned-only system prompt (`engine.describe()`),
  * and the metadata of ALL mounted tools. Unpinned tools never enter the
  * base prompt - the model reaches them through an agent-level `search`
- * tool (the library's intended `agentTools()` shape): search mid-
+ * tool (the library's intended `engine.tools()` shape): search mid-
  * generation, read the cards, then author a script that calls the
  * discovered tools directly.
  */

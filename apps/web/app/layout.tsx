@@ -18,6 +18,7 @@ export const metadata: Metadata = {
 		description:
 			"The model writes JavaScript; callscript parses it into a JSON plan instead of executing it. No sandbox, no separate runtime — the only thing the code can execute is your tools.",
 	},
+	twitter: { card: "summary_large_image" },
 };
 
 export default function RootLayout({

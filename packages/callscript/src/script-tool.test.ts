@@ -276,7 +276,7 @@ describe("engine.tool - a script compiled into a tool", () => {
 			execute: (args: { text: string }) => ({ sent: args.text }),
 		});
 		const outer = callscript({ tools: [closeStale, notify] });
-		expect(outer.tools).toContain("github.closeStale");
+		expect(outer.toolNames).toContain("github.closeStale");
 
 		const outerScript = outer.script({
 			steps: [

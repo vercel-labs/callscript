@@ -296,19 +296,15 @@ describe("engine.toolDefinition", () => {
 /* ------------------------------ session card ------------------------------ */
 
 describe("engine.context", () => {
-	it("is empty without a scope; a seeded scope shows its vars as-is", () => {
+	it("is empty without a scope or before any run", () => {
 		const engine = makeEngine();
 		expect(engine.context()).toContain("(empty");
 		expect(engine.context(engine.scope())).toContain("(empty");
-		// a null-seeded var is referable and currently null - say so
-		expect(engine.context(engine.scope({ dsc_user: null }))).toMatch(
-			/dsc_user = null\s+\(var\)/,
-		);
 	});
 
-	it("previews step outputs and seeded vars with provenance", async () => {
+	it("previews step outputs published by prior runs", async () => {
 		const engine = makeEngine();
-		const scope = engine.scope({ dsc_user: { id: "u1", name: "Ada" } });
+		const scope = engine.scope();
 		await engine.run(
 			{
 				script: {
@@ -327,11 +323,9 @@ describe("engine.context", () => {
 		expect(card).toContain("session variables");
 		// a step output: first element preview + count
 		expect(card).toMatch(
-			/issues\s+= \[\{number: 1, title: "old bug", stale: true\}, …2 items\]\s+\(step\)/,
+			/issues\s+= \[\{number: 1, title: "old bug", stale: true\}, …2 items\]/,
 		);
-		expect(card).toMatch(/stale\s+= \[1\]\s+\(step\)/);
-		// a seeded var the scope holds
-		expect(card).toMatch(/dsc_user\s+= \{id: "u1", name: "Ada"\}\s+\(var\)/);
+		expect(card).toMatch(/stale\s+= \[1\]/);
 	});
 });
 

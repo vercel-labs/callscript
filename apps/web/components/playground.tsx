@@ -2,6 +2,7 @@
 
 import {
 	type AnyScriptTool,
+	callscript,
 	DEFAULT_LIMITS,
 	type ExecuteResult,
 	type JsonSchema,
@@ -10,7 +11,6 @@ import {
 	type Script,
 	type ScriptLimits,
 	ScriptValidationError,
-	callscript,
 	type ToolCallContext,
 } from "callscript";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -69,8 +69,6 @@ type ToolOptions = {
 	/** false keeps the tool OUT of the system prompt: still mounted and
 	 * callable, the agent discovers it through its search tool. */
 	pinned?: boolean;
-	/** same resolved args -> ONE dispatch per run (the engine memo). */
-	idempotent?: boolean;
 	/** declared machine-readable error codes, shown on the tool card. */
 	errors?: readonly string[];
 };
@@ -193,7 +191,6 @@ function compileToolsSource(src: string): CompiledTools {
 			inputSchema: opts.input?.schema,
 			outputSchema: opts.output?.schema,
 			pinned: opts.pinned !== false,
-			idempotent: opts.idempotent === true,
 			errors: opts.errors,
 			execute: (args, ctx) => fn(args, ctx),
 		};
@@ -298,49 +295,6 @@ try {
 }
 return { checked: returns.length };`;
 
-const FX_TOOLS_SRC = `// idempotent tools memoize: same resolved args
-// collapse to ONE dispatch per run. the handler counts dispatches so
-// the run output proves it.
-
-let dispatches = 0;
-
-export const rate = tool(
-  "fx.rate",
-  {
-    description: "live fx rate for a currency pair",
-    idempotent: true,
-    input: z.object({ from: z.string(), to: z.string() }),
-    output: z.object({ rate: z.number(), dispatchNo: z.number() }),
-  },
-  async ({ from, to }) => {
-    await wait(400);
-    dispatches += 1;
-    const table = { "usd-eur": 0.92, "usd-gbp": 0.79 };
-    return { rate: table[from + "-" + to] ?? 1, dispatchNo: dispatches };
-  },
-);
-
-export const save = tool(
-  "report.save",
-  {
-    description: "save a conversion report",
-    input: z.object({ lines: z.array(z.string()) }),
-    output: z.object({ saved: z.number() }),
-  },
-  async ({ lines }) => {
-    await wait(200);
-    return { saved: lines.length };
-  },
-);`;
-
-const FX_JS = `// fx.rate is idempotent - both usd-eur calls collapse to one dispatch
-const a = await fx.rate({ from: "usd", to: "eur" });
-const b = await fx.rate({ from: "usd", to: "eur" });
-const c = await fx.rate({ from: "usd", to: "gbp" });
-const lines = [a, b, c].map(r => r.rate + " via dispatch " + r.dispatchNo);
-await report.save({ lines });
-return { sameDispatch: a.dispatchNo === b.dispatchNo, lines };`;
-
 const SESSION_TOOLS_SRC = `// session variables: a run PUBLISHES its step
 // results into the session - the next script (or the agent's next
 // prompt) reads them as plain read-only variables, no refetch. The
@@ -431,15 +385,6 @@ const PACKS: ToolPack[] = [
 		script: PAYMENTS_JS,
 		prompt:
 			"refund the newest return, and if the refund fails escalate it to support",
-	},
-	{
-		key: "fx",
-		label: "fx.ts",
-		blurb: "idempotent tools memoize - same args collapse to one dispatch",
-		tools: FX_TOOLS_SRC,
-		script: FX_JS,
-		prompt:
-			"look up the usd-eur rate for both invoices and the usd-gbp rate, then save a report of the rates",
 	},
 	{
 		key: "session",
@@ -753,109 +698,8 @@ function Segmented<T extends string>({
 	);
 }
 
-/** Custom dropdown: a styled trigger + listbox popover instead of the
- * native select, closed on outside click / escape. */
-function ViewSelect({
-	value,
-	options,
-	onChange,
-	label = "switch the input view",
-	direction = "down",
-}: {
-	value: string;
-	options: readonly { key: string; label: string }[];
-	onChange: (key: string) => void;
-	/** aria-label for the trigger and listbox */
-	label?: string;
-	/** "up" opens the popover above the trigger - for bottom-edge spots */
-	direction?: "down" | "up";
-}) {
-	const [open, setOpen] = useState(false);
-	const rootRef = useRef<HTMLDivElement>(null);
-	const selected = options.find((o) => o.key === value);
-
-	useEffect(() => {
-		if (!open) return;
-		const onPointerDown = (e: PointerEvent) => {
-			if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
-		};
-		const onKeyDown = (e: KeyboardEvent) => {
-			if (e.key === "Escape") setOpen(false);
-		};
-		document.addEventListener("pointerdown", onPointerDown);
-		document.addEventListener("keydown", onKeyDown);
-		return () => {
-			document.removeEventListener("pointerdown", onPointerDown);
-			document.removeEventListener("keydown", onKeyDown);
-		};
-	}, [open]);
-
-	return (
-		<div ref={rootRef} className="relative">
-			<button
-				type="button"
-				onClick={() => setOpen((v) => !v)}
-				aria-haspopup="listbox"
-				aria-expanded={open}
-				aria-label={label}
-				className={`flex items-center gap-2 rounded-lg border px-3 py-1.5 text-[13px] transition-colors ${
-					open ? "border-faint text-ink" : "border-line text-dim hover:text-ink"
-				}`}
-			>
-				{selected?.label ?? options[0]?.label}
-				<svg
-					aria-hidden
-					viewBox="0 0 16 16"
-					fill="none"
-					stroke="currentColor"
-					strokeWidth="1.5"
-					strokeLinecap="round"
-					strokeLinejoin="round"
-					className={`size-3.5 shrink-0 transition-transform ${open ? "rotate-180" : ""}`}
-				>
-					<path d="M4 6l4 4 4-4" />
-				</svg>
-			</button>
-			{open ? (
-				<div
-					role="listbox"
-					aria-label={label}
-					className={`absolute right-0 z-20 min-w-full overflow-hidden rounded-lg border border-line bg-raise py-1 shadow-lg shadow-black/40 ${
-						direction === "up" ? "bottom-full mb-1.5" : "top-full mt-1.5"
-					}`}
-				>
-					{options.map((o) => (
-						<button
-							key={o.key}
-							type="button"
-							role="option"
-							aria-selected={o.key === value}
-							onClick={() => {
-								onChange(o.key);
-								setOpen(false);
-							}}
-							className={`flex w-full items-center justify-between gap-3 px-3 py-1.5 text-left text-[13px] whitespace-nowrap transition-colors ${
-								o.key === value
-									? "text-ink"
-									: "text-dim hover:bg-bg hover:text-ink"
-							}`}
-						>
-							{o.label}
-							{o.key === value ? (
-								<span aria-hidden className="text-[10px] text-faint">
-									✓
-								</span>
-							) : null}
-						</button>
-					))}
-				</div>
-			) : null}
-		</div>
-	);
-}
-
 export function Playground() {
-	const [approach, setApproach] = useState<Approach>("callscript");
+	const [approach] = useState<Approach>("callscript");
 	const [inputTab, setInputTab] = useState<InputTab>("script");
 	const [source, setSource] = useState(DEFAULT_JS);
 	const [toolsSource, setToolsSource] = useState(DEFAULT_TOOLS_SRC);
@@ -900,8 +744,8 @@ export function Playground() {
 		}
 		return out;
 	}, [limitDrafts]);
-	// real dispatches this run - memoized/settled steps never increment,
-	// so the footer count shows what actually hit a tool handler
+	// real dispatches this run - the footer count shows what actually
+	// hit a tool handler
 	const dispatchCount = useRef(0);
 	const countedTools = useMemo(
 		() =>
@@ -919,8 +763,7 @@ export function Playground() {
 		[countedTools, limits],
 	);
 	// SESSION MEMORY as run-id metadata, not replay: each run gets a
-	// FRESH scope (so every call dispatches against the live world - the
-	// memo still dedupes idempotent same-args calls WITHIN the run) and
+	// FRESH scope (so every call dispatches against the live world) and
 	// RETURNS a run id. Its published step results ride under that id as
 	// one read-only variable, so a later script references old data
 	// explicitly (`run1.closed`) - never silently replayed. Editing tools
@@ -1299,8 +1142,7 @@ export function Playground() {
 		const started = Date.now();
 		dispatchCount.current = 0;
 		try {
-			// a FRESH scope per run (every call dispatches; the memo still
-			// dedupes idempotent same-args calls within the run) with prior
+			// a FRESH scope per run (every call dispatches) with prior
 			// runs injected read-only under their run ids - old data is
 			// referenced explicitly (`run1.closed`), never silently replayed
 			const res = await engine.run(
@@ -1594,39 +1436,6 @@ export function Playground() {
 							options={VIEWS.map((v) => v.key)}
 							labels={Object.fromEntries(VIEWS.map((v) => [v.key, v.label]))}
 							onChange={(key) => setInputTab(key)}
-						/>
-						<ViewSelect
-							value={approach}
-							options={[
-								{ key: "callscript", label: "CallScript" },
-								{ key: "traditional", label: "traditional" },
-								{ key: "codemode", label: "code mode" },
-							]}
-							onChange={(key) => {
-								const next = key as Approach;
-								if (next === approach) return;
-								// park this mode's editor, restore the next mode's own
-								// content - or the pack default if it was never changed
-								// there (traditional has no editor: skip both sides)
-								if (approach !== "traditional")
-									modeSources.current[approach] = source;
-								if (next !== "traditional") {
-									setSource(
-										modeSources.current[next] ??
-											PACKS.find((p) => p.key === pack)?.script ??
-											source,
-									);
-								}
-								setApproach(next);
-								setOutcome(null);
-								setGenSession(null);
-								setLastGenTokens(null);
-								// the conversation SURVIVES the switch: the next send in
-								// the new mode continues from the same shared turns
-								setOutputTab("converted");
-								if (next === "traditional") setInputTab("script");
-							}}
-							label="switch the approach"
 						/>
 					</div>
 					<div className="flex min-h-0 flex-1 flex-col">
@@ -2194,7 +2003,7 @@ export function Playground() {
 									strokeWidth="1.5"
 									strokeLinecap="round"
 									strokeLinejoin="round"
-									className={`size-3.5 shrink-0 transition-transform ${configOpen ? "" : "rotate-180"}`}
+									className={`size-4.5 shrink-0 transition-transform ${configOpen ? "" : "rotate-180"}`}
 								>
 									<path d="M4 6l4 4 4-4" />
 								</svg>

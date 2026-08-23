@@ -10,7 +10,7 @@
  *   the step (an error with a string `code` keeps it as the step's
  *   machine-readable error code), throw `earlyReturn(value)` to end the
  *   run here, or throw `suspend({ key, ... })` to park it
- * - the metadata (`description`, schemas, `errors`, `idempotent`) is the
+ * - the metadata (`description`, schemas, `errors`) is the
  *   tool CARD: what a model sees in its prompt, rendered by `describe`
  */
 import type { CallContext, JsonValue, RunState } from "./types";
@@ -57,9 +57,6 @@ export interface ScriptTool<K extends string = string, A = any, R = unknown> {
 	/** Declared machine-readable failure codes (rendered on the card;
 	 * a thrown error's `code` surfaces as the step error's code). */
 	errors?: readonly string[];
-	/** Same resolved args -> ONE dispatch per scope: the engine memoizes
-	 * the in-flight/settled call in the scope's memo table. */
-	idempotent?: boolean;
 	/** Perform one call. See the module doc for the throw protocol. */
 	execute(args: A, ctx: ToolCallContext): R | Promise<R>;
 }
@@ -87,26 +84,18 @@ export const tool = <K extends string, A = void, R = unknown>(
 ): ScriptTool<K, A, R> => definition;
 
 /**
- * The session as a VALUE - a plain object, no hidden machinery. Runs
- * handed the same scope share it: the accumulated `state` record
- * (reconciliation, published step outputs), the host-seeded `vars`
- * expressions can reference, and the memo table for idempotent tools.
- * `engine.scope()` mints one; mutate `vars` freely between runs.
+ * The session as a VALUE - a plain object holding the accumulated run
+ * record. Runs handed the same scope share it: settled steps are
+ * reused and published step outputs are readable from later scripts.
  */
 export interface ScriptScope {
 	/** The accumulated session record - every run in the scope merges in. */
 	state?: RunState;
-	/** Host-seeded session variables, readable from every expression. */
-	vars: Record<string, unknown>;
-	/** Idempotent-tool memo: `name:args-hash` -> the one dispatched call. */
-	memo: Map<string, Promise<unknown>>;
 }
 
-/** Mint a scope. Prefer `engine.scope(seed)`; this is the bare form. */
-export const createScope = (seed?: Record<string, unknown>): ScriptScope => ({
+/** Mint a scope. Prefer `engine.scope()`; this is the bare form. */
+export const createScope = (): ScriptScope => ({
 	state: undefined,
-	vars: { ...seed },
-	memo: new Map(),
 });
 
 /** Re-exported for adapter authors: what a resolution payload may be. */

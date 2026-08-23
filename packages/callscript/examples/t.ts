@@ -61,7 +61,7 @@ console.log(def.description);
 
 console.log("\n\n2. the LIVE prompt context - engine.context(scope):\n");
 
-const scope = engine.scope({ user: { id: "u1", name: "Ada" } });
+const scope = engine.scope();
 console.log("before any run:");
 console.log(engine.context(scope));
 

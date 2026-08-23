@@ -14,7 +14,7 @@ Two small runtime dependencies (`acorn`, `zod`), no sandbox, no service: the eng
 
 ## Quick start
 
-Mount your AI SDK tools on an engine and hand the model the ready-made tool pair - `execute` runs the script it authors, `search` finds mounted tools by keyword:
+Mount your AI SDK tools on an engine and hand the model the ready-made tools - `execute` runs the script it authors; `search` and `describe` let it discover mounted tools without carrying every definition in its prompt:
 
 ```ts
 import { generateText } from "ai";
@@ -28,7 +28,7 @@ const engine = callscript({
 await generateText({
 	model: "anthropic/claude-sonnet-5",
 	prompt: "Close every stale open issue in the 'api' repo.",
-	tools: toAISDKTools(engine), // execute + search
+	tools: toAISDKTools(engine), // execute + search + describe
 });
 ```
 
@@ -85,7 +85,7 @@ const seen = new Set(ids);
     xs.filter((x, i, a) => a.indexOf(x) === i); group with Object.groupBy(xs, x => x.key).
 ```
 
-Every door accepts both surfaces: a **string** is the JS surface, an **object** is the JSON plan. Engines default to teaching the JS surface (`describe`, `toolDefinition`, `agentTools`); pass `format: "json"` to teach the JSON plan instead - execution accepts both regardless.
+Every door accepts both surfaces: a **string** is the JS surface, an **object** is the JSON plan. Engines default to teaching the JS surface (`describe`, `toolDefinition`, `tools`); pass `format: "json"` to teach the JSON plan instead - execution accepts both regardless.
 
 ## The plan: three verbs, four modifiers
 
@@ -130,18 +130,19 @@ Override any subset: `callscript({ tools, limits: { maxTotalCalls: 50 } })`.
 The engine is **adapter-based**. It never knows where a tool came from; everything mounts through one neutral shape, `ScriptTool`:
 
 ```ts
-{ name, description?, inputSchema?, outputSchema?, errors?, idempotent?, execute(args, ctx) }
+{ name, description?, inputSchema?, outputSchema?, errors?, execute(args, ctx) }
 ```
 
 so you can use callscript purely with the AI SDK, with plain object literals, or any mix:
 
 - **`callscript/ai-sdk`**: hand it the same `tools` record you'd give `generateText`/`streamText`
-- **`callscript/eve`**: the engine's `execute`/`search` pair as ready-made [eve](https://github.com/vercel/eve) agent tools
+- **`callscript/eve`**: the engine's `execute`/`search`/`describe` tools, ready-made for [eve](https://github.com/vercel/eve) agents
+- **`callscript/mcp`**: connect an MCP client directly - its listed tools mount as callscript tools (the way Code Mode connects MCP servers, without the sandbox)
 - **plain literals**: a `{ name, execute }` object is already a tool; the `tool()` helper pins the literals for typed authoring
 
 ## With the AI SDK
 
-AI SDK in, AI SDK out: you never hand-write a script. Define tools with the SDK's own `tool()`, mount them through the adapter, and `toAISDKTools(engine)` hands the model the engine as a ready-made tool pair: `execute` runs the script it authors, `search` finds mounted tools by keyword.
+AI SDK in, AI SDK out: you never hand-write a script. Define tools with the SDK's own `tool()`, mount them through the adapter, and `toAISDKTools(engine)` hands the model the engine as ready-made tools: `execute` runs the script it authors, `search` and `describe` discover the mounted tools on demand.
 
 ```ts
 import { generateText, tool } from "ai";
@@ -171,11 +172,11 @@ await generateText({
 	model: "anthropic/claude-sonnet-5",
 	system: "You act by writing ONE callscript.",
 	prompt: "Close every stale open issue in the 'api' repo.",
-	tools: toAISDKTools(engine), // `execute` runs a script, `search` finds tools
+	tools: toAISDKTools(engine), // `execute` runs a script; `search`/`describe` find tools
 });
 ```
 
-`toAISDKTools(engine)` wraps `engine.agentTools()`, the host-neutral pair. `execute` validates the script at the door (a rejected script returns `status: "invalid"` with every issue, for the model to retry), runs it against a shared session scope, and returns the outcome without the session state (that rides the scope, never the prompt). `search` matches mounted tools by keyword and returns their signature cards. With 20 or fewer tools the cards inline into `execute`'s description; past that (or with `inlineTools: false`) the model discovers tools through `search` instead, so the prompt stays small however many tools you mount. Pass `scope` to join an existing session, `names` to rename the pair. Prefer manual wiring? `engine.toolDefinition()` still returns the one-tool `description`/`inputSchema` to hand a tool interface yourself.
+`toAISDKTools(engine)` wraps `engine.tools()`, the host-neutral trio. `execute` is the tool: it validates the script at the door (a rejected script returns `status: "invalid"` with every issue, for the model to retry), runs it against a shared session scope, and returns the outcome without the session state (that rides the scope, never the prompt). `search` and `describe` exist so the prompt doesn't carry every tool definition ahead of time: `search` matches mounted tools by keyword and returns names with one-line summaries, `describe` returns the full signature cards for the names a script will actually call. With 20 or fewer tools the cards inline into `execute`'s description; past that (or with `inlineTools: false`) the model discovers tools through `search`/`describe` instead, so the prompt stays small however many tools you mount. Pass `scope` to join an existing session, `names` to rename the tools. Prefer manual wiring? `engine.toolDefinition()` still returns the one-tool `description`/`inputSchema` to hand a tool interface yourself.
 
 For the task above the model authors one script - which the engine compiles into the inert plan, no code ever running:
 
@@ -207,16 +208,32 @@ which is stored and executed as:
 
 The record keys are the registry: a script's `call` names a tool by key, and `validate` rejects anything else before a run starts. A `namespace` prefixes the keys, so whole records mount side by side by spreading: `tools: [...fromAISDKTools(github, { namespace: "github" }), ...fromAISDKTools(slack, { namespace: "slack" })]`. Args validate against each tool's schema (zod, any standard schema, or `jsonSchema()`) **before** `execute` fires; a failure fails the step with code `invalid_tool_args`. The schemas also render the tool cards `engine.describe()` / `engine.toolDefinition()` put in the model's prompt.
 
+## With MCP
+
+`fromMCP(client)` mounts an MCP server's listed tools directly - names become registry names (a `namespace` prefixes them), descriptions and JSON Schemas render on the cards, and each call dispatches through `client.callTool`. Structural: anything with `listTools`/`callTool` fits (the official `@modelcontextprotocol/sdk` Client does), so the adapter adds no dependency.
+
+```ts
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { callscript } from "callscript";
+import { fromMCP } from "callscript/mcp";
+
+const cs = callscript({
+	tools: await fromMCP(client, { namespace: "github" }),
+});
+```
+
+Results come back as plain values: `structuredContent` when the server provides it, otherwise text content (JSON-parsed when it holds JSON). A result flagged `isError` fails the step with code `mcp_tool_error`. The listing is a snapshot - re-run `fromMCP` to pick up newly added server tools.
+
 ## With eve
 
-`toEveTools(engine)` returns the same `execute`/`search` pair as branded eve tool definitions. eve tools are files - one default export per `agent/tools/<name>.ts` - so re-export each from its own file:
+`toEveTools(engine)` returns the same `execute`/`search`/`describe` tools as branded eve tool definitions. eve tools are files - one default export per `agent/tools/<name>.ts` - so re-export each from its own file:
 
 ```ts
 // lib/callscript.ts
 import { toEveTools } from "callscript/eve";
 import { engine } from "./engine";
 
-export const { execute, search } = toEveTools(engine);
+export const { execute, search, describe } = toEveTools(engine);
 ```
 
 ```ts
@@ -227,7 +244,7 @@ export { execute as default } from "../../lib/callscript";
 export { search as default } from "../../lib/callscript";
 ```
 
-The agent authors scripts through `execute` and discovers mounted tools through `search`, instead of carrying every tool card in its prompt. Options are `engine.agentTools`'s (`scope`, `inlineTools`, `names`); in eve the filename decides the model-facing name, so keep `names` in step with the files. A `defineDynamic` tools file can also serve the pair from one slot by returning the record as-is.
+The agent authors scripts through `execute`, finds mounted tools through `search`, and loads their full cards through `describe` - instead of carrying every tool card in its prompt. Options are `engine.tools`'s (`scope`, `inlineTools`, `names`); in eve the filename decides the model-facing name, so keep `names` in step with the files. A `defineDynamic` tools file can also serve the pair from one slot by returning the record as-is.
 
 
 ## With plain tools
@@ -260,25 +277,15 @@ const second = await engine.run({ script, state: first.state, input: { code: "42
 
 The suspended run comes back as a serializable `state` record: store it anywhere - it survives a restart - and settled steps are reused instead of re-run on resume.
 
-## The session is a plain scope object
+## Sessions
 
-`engine.scope()` mints the session as a VALUE, no hidden machinery. Runs handed the same scope share the accumulated record (settled steps are reused, published outputs become session variables) and the host-seeded `vars` expressions can read:
+A session is just the accumulated run record. Runs handed the same scope share it: settled steps are reused, and a later script references an earlier run's step outputs by name - no re-fetch, no state threading:
 
 ```ts
-const scope = engine.scope({ user }); // seeds vars
+const scope = engine.scope();
 
 await engine.run({ script: one }, scope);
 await engine.run({ script: two }, scope); // `two` reads `one`'s step outputs
-```
-
-Tools see the scope too: `execute(args, ctx)` receives `ctx.scope`, so a tool can read `ctx.scope.vars`, write per-session state, or read prior step outputs via `publishedVariables(ctx.scope.state)`. Explicit `state:` still wins for hosts that manage records themselves.
-
-`engine.session()` opens the full runner on the same registry: detached runs (`"await": false`), `await.<id>` joins, the settlement digest, and an accumulated record every new run executes against:
-
-```ts
-const sess = engine.session({}, scope); // scope optional - shares vars with it
-await sess.start({ id: "bg", await: false, steps: [/* ... */] }); // may answer pending
-await sess.start({ steps: [{ id: "r", call: "await.bg" }] });     // joins it
 ```
 
 ## The error branch of the dataflow
@@ -301,9 +308,6 @@ which compiles to:
   "args": { "text": "=`close failed: ${$errors.closed.message}`" } }
 ```
 
-## Idempotent tools memoize
-
-A tool declaring `idempotent: true` promises same-args-same-result and repeat-safety. The engine then serves repeated calls by **input addressing**: same tool + same resolved args → one dispatch per scope, shared even between concurrent steps (the memo holds the in-flight promise; failures never cache). The table rides the scope, so runs sharing a scope share it, and the tool card advertises the contract to the authoring model. The AI SDK shape can't express it, so pass it as an override: `fromAISDKTools(tools, { overrides: { "svc.lookup": { idempotent: true } } })`.
 
 ## Scripts compile into tools
 

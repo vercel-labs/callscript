@@ -10,7 +10,8 @@
 		"tool-calling",
 		"agents",
 		"ai-sdk",
-		"code-mode"
+		"code-mode",
+		"mcp"
 	],
 	"exports": {
 		".": {
@@ -24,6 +25,10 @@
 		"./eve": {
 			"types": "./dist/eve.d.ts",
 			"default": "./dist/eve.js"
+		},
+		"./mcp": {
+			"types": "./dist/mcp.d.ts",
+			"default": "./dist/mcp.js"
 		}
 	},
 	"files": [

@@ -17,7 +17,7 @@
  * `asSchema` to normalize whatever schema flavor each tool declares.
  */
 import { asSchema, jsonSchema } from "ai";
-import type { AgentTool, AgentToolsOptions } from "../engine";
+import type { AgentTool, ToolsOptions } from "../engine";
 import type { ScriptTool, ToolCallContext } from "../tool";
 
 /** The slice of an AI SDK `Tool` this adapter reads - structural, so
@@ -37,8 +37,6 @@ export type AiSdkToolLike = {
  * metadata keyed by the record's ORIGINAL key (pre-namespace). */
 export type AiToolOverrides<T> = {
 	[K in keyof T]?: {
-		/** Same resolved args -> one dispatch per scope (engine memo). */
-		idempotent?: boolean;
 		/** Declared machine-readable error codes, for the tool card. */
 		errors?: readonly string[];
 		/** Overrides the tool's own description on the card. */
@@ -133,7 +131,6 @@ export const fromAISDKTools = <
 			inputSchema: input?.jsonSchema as Record<string, unknown> | undefined,
 			outputSchema: output?.jsonSchema as Record<string, unknown> | undefined,
 			...(extra?.errors ? { errors: extra.errors } : {}),
-			...(extra?.idempotent ? { idempotent: true } : {}),
 			execute: async (args: unknown, ctx: ToolCallContext) => {
 				let resolved = args;
 				if (input?.validate) {
@@ -159,29 +156,32 @@ export const fromAISDKTools = <
 	});
 };
 
-/** The slice of an engine `agentTools` reads - structural, so it takes
+/** The slice of an engine `toAISDKTools` reads - structural, so it takes
  * any engine without importing the full type. */
-type AgentToolsHost = {
-	agentTools(options?: AgentToolsOptions): {
+type ToolsHost = {
+	tools(options?: ToolsOptions): {
 		execute: AgentTool;
 		search: AgentTool;
+		describe: AgentTool;
 	};
 };
 
 /**
- * The engine's agent tool pair (`engine.agentTools()`), wrapped for the
- * AI SDK - hand the record straight to `generateText`/`streamText`:
+ * The engine's tools (`engine.tools()`), wrapped for the AI SDK - hand
+ * the record straight to `generateText`/`streamText`:
  *
  *   tools: toAISDKTools(engine)
  *
  * `execute` runs one script against a shared session scope (invalid
- * scripts return their issues for the model to retry), `search` finds
- * mounted tools by keyword. Renames via `options.names` carry through
- * to the record keys, so the model sees the names you chose.
+ * scripts return their issues for the model to retry); `search` finds
+ * mounted tools by keyword and `describe` renders their full signature
+ * cards, so the prompt never carries every tool definition ahead of
+ * time. Renames via `options.names` carry through to the record keys,
+ * so the model sees the names you chose.
  */
 export const toAISDKTools = (
-	engine: AgentToolsHost,
-	options?: AgentToolsOptions,
+	engine: ToolsHost,
+	options?: ToolsOptions,
 ): Record<
 	string,
 	{
@@ -190,14 +190,15 @@ export const toAISDKTools = (
 		execute: (args: any) => Promise<unknown>;
 	}
 > => {
-	const pair = engine.agentTools(options);
+	const trio = engine.tools(options);
 	const wrap = (t: AgentTool) => ({
 		description: t.description,
 		inputSchema: jsonSchema(t.inputSchema as any),
 		execute: (args: any) => t.execute(args),
 	});
 	return {
-		[pair.execute.name]: wrap(pair.execute),
-		[pair.search.name]: wrap(pair.search),
+		[trio.execute.name]: wrap(trio.execute),
+		[trio.search.name]: wrap(trio.search),
+		[trio.describe.name]: wrap(trio.describe),
 	};
 };

@@ -1,8 +1,8 @@
 /**
  * Pure-JS SHA-256 producing the same hex digests as node:crypto, so the
  * engine has no Node built-in dependency and runs wherever JS runs -
- * browser, edge, serverless. Step hashes are identity keys (reconciliation,
- * memoization), not security material, but keeping SHA-256 keeps every
+ * browser, edge, serverless. Step hashes are identity keys
+ * (reconciliation), not security material, but keeping SHA-256 keeps every
  * previously stored record's hashes valid.
  */
 

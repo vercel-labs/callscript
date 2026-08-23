@@ -33,7 +33,6 @@ export type IntrospectableTool = {
 	inputSchema?: JsonSchema;
 	outputSchema?: JsonSchema;
 	errors?: readonly string[];
-	idempotent?: boolean;
 };
 
 /* ------------------------------ type cards ------------------------------- */
@@ -127,9 +126,6 @@ export const toolCard = (tool: IntrospectableTool): string => {
 		lines.push(`  ${tool.description.trim().replace(/\s*\n\s*/g, " ")}`);
 	}
 	if (tool.errors?.length) lines.push(`  errors: ${tool.errors.join(", ")}`);
-	if (tool.idempotent) {
-		lines.push("  idempotent (same args -> one call per session)");
-	}
 	return lines.join("\n");
 };
 
@@ -530,9 +526,6 @@ const preview = (value: unknown, depth: number): string => {
 export type SessionEntry = {
 	name: string;
 	value: unknown;
-	/** "step": published by a settled step of a prior run · "var": a
-	 * declared module var the scope currently holds. */
-	source: "step" | "var";
 };
 
 /** The live half of the prompt: every name expressions can reference
@@ -541,8 +534,7 @@ export const sessionCard = (entries: readonly SessionEntry[]): string => {
 	if (entries.length === 0) return "session: (empty - no variables set)";
 	const width = Math.max(...entries.map((e) => e.name.length));
 	const lines = entries.map(
-		(e) =>
-			`  ${e.name.padEnd(width)} = ${previewValue(e.value)}  (${e.source})`,
+		(e) => `  ${e.name.padEnd(width)} = ${previewValue(e.value)}`,
 	);
 	return ["session variables (referable from expressions):", ...lines].join(
 		"\n",

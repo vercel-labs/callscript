@@ -21,29 +21,6 @@ const closeIssue = tool({
 	}),
 });
 
-/** Tools share per-session state through the scope's vars - the same
- * cells expressions read, writable from any dispatch. */
-const login = tool({
-	name: "auth.login",
-	execute: (args: { id: string }, ctx) => {
-		if (ctx.scope) ctx.scope.vars.cs_user = { id: args.id, name: "Ada" };
-		return { ok: true };
-	},
-});
-
-const whoami = tool({
-	name: "auth.whoami",
-	execute: (_args: void, ctx) => {
-		const user = ctx.scope?.vars.cs_user;
-		if (user === undefined) {
-			throw Object.assign(new Error("auth.whoami: no user in scope"), {
-				code: "missing_required_var",
-			});
-		}
-		return user as { id: string; name: string };
-	},
-});
-
 /** A declared refusal: the thrown error's `code` is the step error code. */
 const charge = tool({
 	name: "pay.charge",
@@ -59,21 +36,15 @@ const charge = tool({
 	},
 });
 
-const tools = [listIssues, closeIssue, login, whoami, charge] as const;
+const tools = [listIssues, closeIssue, charge] as const;
 
 /* --------------------------------- tests --------------------------------- */
 
 describe("the tool registry", () => {
 	it("tools are the mounted tools' names", () => {
 		const engine = callscript({ tools });
-		expect(engine.tools.sort()).toEqual(
-			[
-				"issues.list",
-				"issues.close",
-				"auth.login",
-				"auth.whoami",
-				"pay.charge",
-			].sort(),
+		expect(engine.toolNames.sort()).toEqual(
+			["issues.list", "issues.close", "pay.charge"].sort(),
 		);
 	});
 
@@ -95,7 +66,7 @@ describe("the tool registry", () => {
 	});
 
 	it("the SAME tool mounted twice is fine", () => {
-		expect(callscript({ tools: [listIssues, listIssues] }).tools).toEqual([
+		expect(callscript({ tools: [listIssues, listIssues] }).toolNames).toEqual([
 			"issues.list",
 		]);
 	});
@@ -177,63 +148,6 @@ describe("dispatch through the tool door", () => {
 		if (result.status === "ok") {
 			expect(result.output).toEqual([{ closed: 1 }, { closed: 3 }]);
 		}
-	});
-});
-
-describe("scope vars across steps", () => {
-	it("a var set by one step's tool is read by the next - one run, one scope", async () => {
-		const engine = callscript({ tools });
-		const result = await engine.run(
-			{
-				script: {
-					steps: [
-						{ id: "session", call: "auth.login", args: { id: "u1" } },
-						{ id: "me", call: "auth.whoami", after: ["session"] },
-					],
-				},
-			},
-			engine.scope(),
-		);
-		expect(result.status).toBe("ok");
-		if (result.status === "ok") {
-			expect(result.output).toEqual({ id: "u1", name: "Ada" });
-		}
-	});
-
-	it("a tool needing scope state fails its step when nothing set it", async () => {
-		const engine = callscript({ tools });
-		const result = await engine.run(
-			{ script: { steps: [{ id: "me", call: "auth.whoami" }] } },
-			engine.scope(),
-		);
-		expect(result.status).toBe("error");
-		if (result.status === "error") {
-			expect(result.error.code).toBe("missing_required_var");
-		}
-	});
-
-	it("scope(seed) seeds the vars for the whole run", async () => {
-		const engine = callscript({ tools });
-		const scope = engine.scope({ cs_user: { id: "u9", name: "Grace" } });
-		const result = await engine.run(
-			{ script: { steps: [{ id: "me", call: "auth.whoami" }] } },
-			scope,
-		);
-		expect(result.status).toBe("ok");
-		if (result.status === "ok") {
-			expect(result.output).toEqual({ id: "u9", name: "Grace" });
-		}
-	});
-
-	it("seeded vars are readable from expressions", async () => {
-		const engine = callscript({ tools });
-		const scope = engine.scope({ cs_user: { id: "u1", name: "Ada" } });
-		const result = await engine.run(
-			{ script: { steps: [{ id: "name", let: "cs_user.name" }] } },
-			scope,
-		);
-		expect(result.status).toBe("ok");
-		if (result.status === "ok") expect(result.output).toBe("Ada");
 	});
 });
 
@@ -381,26 +295,6 @@ describe("sessions", () => {
 		expect(second.status).toBe("done");
 		if (second.status === "done") {
 			expect(second.output).toEqual(["old bug", "fresh bug", "old chore"]);
-		}
-	});
-
-	it("a session handed a scope shares its vars across runs", async () => {
-		const engine = callscript({ tools });
-		const scope = engine.scope();
-		const sess = engine.session({}, scope);
-
-		const first = await sess.start({
-			steps: [{ id: "s", call: "auth.login", args: { id: "u7" } }],
-		});
-		expect(first.status).toBe("done");
-
-		// No login in THIS run - cs_user survives on the scope.
-		const second = await sess.start({
-			steps: [{ id: "me", call: "auth.whoami" }],
-		});
-		expect(second.status).toBe("done");
-		if (second.status === "done") {
-			expect(second.output).toEqual({ id: "u7", name: "Ada" });
 		}
 	});
 

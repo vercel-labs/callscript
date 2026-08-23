@@ -99,7 +99,7 @@ export function hashStep(step: Step): string {
 }
 
 /** Deterministic JSON-ish encoding (sorted keys, undefined dropped) -
- * the step-hash payload, and the memo key for idempotent calls. */
+ * the step-hash payload. */
 export function stableStringify(value: unknown): string {
 	if (value === null || typeof value !== "object") return JSON.stringify(value);
 	if (Array.isArray(value)) {

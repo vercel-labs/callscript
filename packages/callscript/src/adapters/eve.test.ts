@@ -10,12 +10,12 @@ const closeIssue = tool({
 });
 
 describe("toEveTools", () => {
-	it("returns both tools as branded eve definitions", () => {
+	it("returns all three tools as branded eve definitions", () => {
 		const engine = callscript({ tools: [closeIssue] });
-		const { execute, search } = toEveTools(engine);
+		const { execute, search, describe: describeTool } = toEveTools(engine);
 		// eve's defineTool stamps a brand lifecycle code validates - the
 		// definitions must not be raw literals
-		for (const def of [execute, search]) {
+		for (const def of [execute, search, describeTool]) {
 			expect(def.description.length).toBeGreaterThan(0);
 			expect(def.inputSchema).toMatchObject({ type: "object" });
 			expect(typeof def.execute).toBe("function");
