@@ -9,10 +9,12 @@
 		"build": "turbo run build",
 		"dev": "turbo run dev",
 		"lint": "biome check .",
-		"format": "biome format --write ."
+		"format": "biome format --write .",
+		"release": "bumpp packages/callscript/package.json"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "^2.5.7",
+		"bumpp": "^12.2.1",
 		"turbo": "^2.5.0"
 	},
 	"packageManager": "pnpm@10.29.3"
