@@ -1,0 +1,132 @@
+name: Release
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions: {}
+
+jobs:
+  release:
+    if: >-
+      github.event.pull_request.merged == true &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      startsWith(github.event.pull_request.head.ref, 'release/')
+    concurrency:
+      group: npm-release
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: "https://registry.npmjs.org"
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Read release config
+        id: release_config
+        shell: bash
+        run: |
+          node --no-warnings --input-type=module -e '
+            import { releaseConfig } from "./bump.config.ts";
+            console.log(`branch=${releaseConfig.branch}`);
+            console.log(`npm_tag=${releaseConfig.npmTag}`);
+          ' >> "$GITHUB_OUTPUT"
+
+      - name: Determine release
+        id: release
+        shell: bash
+        env:
+          CONFIGURED_RELEASE_BRANCH: ${{ steps.release_config.outputs.branch }}
+          RELEASE_BRANCH: ${{ github.event.pull_request.base.ref }}
+          RELEASE_PR_BRANCH: ${{ github.event.pull_request.head.ref }}
+          STABLE_NPM_TAG: ${{ steps.release_config.outputs.npm_tag }}
+        run: |
+          PACKAGE_VERSION=$(node -p "require('./packages/callscript/package.json').version")
+          TAG="v$PACKAGE_VERSION"
+
+          if [[ "$RELEASE_BRANCH" != "$CONFIGURED_RELEASE_BRANCH" ]]; then
+            echo "::error::Release branch $RELEASE_BRANCH does not match configured branch $CONFIGURED_RELEASE_BRANCH."
+            exit 1
+          fi
+
+          if [[ "$RELEASE_PR_BRANCH" != "release/$TAG" ]]; then
+            echo "::error::Release branch $RELEASE_PR_BRANCH does not match package version $PACKAGE_VERSION."
+            exit 1
+          fi
+
+          if [[ "$PACKAGE_VERSION" =~ -(next|canary|beta|rc) ]]; then
+            NPM_TAG=${BASH_REMATCH[1]}
+          else
+            if [[ ! "$PACKAGE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "::error::Unsupported release version: $PACKAGE_VERSION"
+              exit 1
+            fi
+
+            NPM_TAG="$STABLE_NPM_TAG"
+          fi
+
+          echo "version=$PACKAGE_VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "npm_tag=$NPM_TAG" >> "$GITHUB_OUTPUT"
+          echo "Releasing $TAG from $RELEASE_BRANCH with npm tag $NPM_TAG"
+
+      - name: Build
+        run: pnpm build
+
+      - name: Create tag
+        uses: actions/github-script@v8
+        env:
+          RELEASE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+        with:
+          script: |
+            const ref = `tags/${process.env.RELEASE_TAG}`;
+            const sha = process.env.RELEASE_SHA;
+
+            try {
+              const { data } = await github.rest.git.getRef({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                ref,
+              });
+
+              if (data.object.sha !== sha) {
+                core.setFailed(`${process.env.RELEASE_TAG} already points to ${data.object.sha}.`);
+                return;
+              }
+
+              core.info(`${process.env.RELEASE_TAG} already points to ${sha}.`);
+            } catch (error) {
+              if (error.status !== 404) throw error;
+
+              await github.rest.git.createRef({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                ref: `refs/${ref}`,
+                sha,
+              });
+            }
+
+      - name: Create GitHub release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          git fetch origin "refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG"
+          npx changelogithub --to "$RELEASE_TAG"
+
+      - name: Publish to npm
+        run: pnpm -r publish --provenance --access public --no-git-checks --tag ${{ steps.release.outputs.npm_tag }}

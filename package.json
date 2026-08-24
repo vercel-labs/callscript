@@ -10,7 +10,7 @@
 		"dev": "turbo run dev",
 		"lint": "biome check .",
 		"format": "biome format --write .",
-		"release": "bumpp packages/callscript/package.json"
+		"release": "bumpp"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "^2.5.7",
