@@ -78,7 +78,7 @@ export function analyzeScript(script: Script): ScriptAnalysis {
  * Loosely collect the unique tool names a raw `execute` input scripts to
  * call, including `parallel` branches. Unlike `analyzeScript`, this accepts
  * completely untrusted input and never throws — host-side approval gates
- * (an eve `approval` policy, a Slack card, ...) run BEFORE the engine
+ * (an approval policy, a Slack card, ...) run BEFORE the engine
  * validates the script, so malformed shapes just contribute nothing.
  */
 export function scriptedTools(input: unknown): string[] {

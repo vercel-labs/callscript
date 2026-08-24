@@ -10,7 +10,7 @@
 npm install callscript
 ```
 
-Two small runtime dependencies (`acorn`, `zod`), no sandbox, no service: the engine is a library that runs wherever your JS runs. The adapters' peers (`ai`, `eve`) are optional and only needed by their own entrypoints.
+Two small runtime dependencies (`acorn`, `zod`), no sandbox, no service: the engine is a library that runs wherever your JS runs. The adapter's peer (`ai`) is optional and only needed by its own entrypoint.
 
 ## Quick start
 
@@ -134,7 +134,6 @@ The engine is **adapter-based**. It never knows where a tool came from; everythi
 so you can use callscript purely with the AI SDK, with plain object literals, or any mix:
 
 - **`callscript/ai-sdk`**: hand it the same `tools` record you'd give `generateText`/`streamText`
-- **`callscript/eve`**: the engine's `execute`/`search`/`describe` tools, ready-made for [eve](https://github.com/vercel/eve) agents
 - **plain literals**: a `{ name, execute }` object is already a tool; the `tool()` helper pins the literals for typed authoring
 
 ## With the AI SDK
@@ -204,29 +203,6 @@ which is stored and executed as:
 ```
 
 The record keys are the registry: a script's `call` names a tool by key, and `validate` rejects anything else before a run starts. A `namespace` prefixes the keys, so whole records mount side by side by spreading: `tools: [...fromAISDKTools(github, { namespace: "github" }), ...fromAISDKTools(slack, { namespace: "slack" })]`. Args validate against each tool's schema (zod, any standard schema, or `jsonSchema()`) **before** `execute` fires; a failure fails the step with code `invalid_tool_args`. The schemas also render the tool cards `engine.describe()` / `engine.toolDefinition()` put in the model's prompt.
-
-## With eve
-
-`toEveTools(engine)` returns the same `execute`/`search`/`describe` tools as branded eve tool definitions. eve tools are files - one default export per `agent/tools/<name>.ts` - so re-export each from its own file:
-
-```ts
-// lib/callscript.ts
-import { toEveTools } from "callscript/eve";
-import { engine } from "./engine";
-
-export const { execute, search, describe } = toEveTools(engine);
-```
-
-```ts
-// agent/tools/execute.ts
-export { execute as default } from "../../lib/callscript";
-
-// agent/tools/search.ts
-export { search as default } from "../../lib/callscript";
-```
-
-The agent authors scripts through `execute`, finds mounted tools through `search`, and loads their full cards through `describe` - instead of carrying every tool card in its prompt. Options are `engine.tools`'s (`scope`, `inlineTools`, `names`); in eve the filename decides the model-facing name, so keep `names` in step with the files. A `defineDynamic` tools file can also serve the pair from one slot by returning the record as-is.
-
 
 ## With plain tools
 

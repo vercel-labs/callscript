@@ -10,7 +10,7 @@
 npm install callscript
 ```
 
-Two small runtime dependencies (`acorn`, `zod`), no sandbox, no service: the engine is a library that runs wherever your JS runs. The adapters' peers (`ai`, `eve`) are optional and only needed by their own entrypoints.
+Two small runtime dependencies (`acorn`, `zod`), no sandbox, no service: the engine is a library that runs wherever your JS runs. The adapter's peer (`ai`) is optional and only needed by its own entrypoint.
 
 ## Quick start
 
@@ -136,7 +136,6 @@ The engine is **adapter-based**. It never knows where a tool came from; everythi
 so you can use callscript purely with the AI SDK, with plain object literals, or any mix:
 
 - **`callscript/ai-sdk`**: hand it the same `tools` record you'd give `generateText`/`streamText`
-- **`callscript/eve`**: the engine's `execute`/`search`/`describe` tools, ready-made for [eve](https://github.com/vercel/eve) agents
 - **`callscript/mcp`**: connect an MCP client directly - its listed tools mount as callscript tools (the way Code Mode connects MCP servers, without the sandbox)
 - **plain literals**: a `{ name, execute }` object is already a tool; the `tool()` helper pins the literals for typed authoring
 
@@ -223,29 +222,6 @@ const cs = callscript({
 ```
 
 Results come back as plain values: `structuredContent` when the server provides it, otherwise text content (JSON-parsed when it holds JSON). A result flagged `isError` fails the step with code `mcp_tool_error`. The listing is a snapshot - re-run `fromMCP` to pick up newly added server tools.
-
-## With eve
-
-`toEveTools(engine)` returns the same `execute`/`search`/`describe` tools as branded eve tool definitions. eve tools are files - one default export per `agent/tools/<name>.ts` - so re-export each from its own file:
-
-```ts
-// lib/callscript.ts
-import { toEveTools } from "callscript/eve";
-import { engine } from "./engine";
-
-export const { execute, search, describe } = toEveTools(engine);
-```
-
-```ts
-// agent/tools/execute.ts
-export { execute as default } from "../../lib/callscript";
-
-// agent/tools/search.ts
-export { search as default } from "../../lib/callscript";
-```
-
-The agent authors scripts through `execute`, finds mounted tools through `search`, and loads their full cards through `describe` - instead of carrying every tool card in its prompt. Options are `engine.tools`'s (`scope`, `inlineTools`, `names`); in eve the filename decides the model-facing name, so keep `names` in step with the files. A `defineDynamic` tools file can also serve the pair from one slot by returning the record as-is.
-
 
 ## With plain tools
 

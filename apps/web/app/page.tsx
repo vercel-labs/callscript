@@ -176,33 +176,6 @@ await generateText({
 								/>
 							),
 						},
-						{
-							label: "eve",
-							panel: (
-								<Code
-									code={`
-// lib/callscript.ts
-import { toEveTools } from "callscript/eve";
-export const { execute, search, describe } = toEveTools(cs);
-
-// agent/tools/execute.ts - eve tools are one file per tool
-export { execute as default } from "../../lib/callscript";
-`}
-								/>
-							),
-						},
-						{
-							label: "cli",
-							panel: (
-								<Code
-									lang="sh"
-									code={`
-# add the callscript skill to an existing agent (claude code, cursor, ...)
-npx callscript skill
-`}
-								/>
-							),
-						},
 					]}
 				/>
 			</>
@@ -215,7 +188,7 @@ npx callscript skill
 			<>
 				<p>
 					In callscript, a tool is anything an executor can evaluate. Executors
-					come from adapters - the AI SDK, MCP, eve, and others - and the
+					come from adapters - the AI SDK, MCP, and others - and the
 					default executor evaluates a plain object:{" "}
 					<K>&#123; name, execute &#125;</K> plus an optional schema and
 					description:
@@ -269,21 +242,6 @@ import { fromMCP } from "callscript/mcp";
 const cs = callscript({
 	tools: await fromMCP(client, { namespace: "github" }),
 });
-`}
-								/>
-							),
-						},
-						{
-							label: "eve",
-							panel: (
-								<Code
-									code={`
-// lib/callscript.ts
-import { toEveTools } from "callscript/eve";
-export const { execute, search, describe } = toEveTools(cs);
-
-// agent/tools/execute.ts - eve tools are one file per tool
-export { execute as default } from "../../lib/callscript";
 `}
 								/>
 							),
