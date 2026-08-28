@@ -2,6 +2,8 @@
 
 **Code Mode, without the sandbox.**
 
+> **Experimental.** callscript is a [Vercel Labs](https://github.com/vercel-labs) project. APIs may change between releases.
+
 **The model writes JavaScript - and it never runs.** Instead of calling tools one at a time, the model authors ONE small script in TypeScript and it compiles into an inert JSON plan: validated whole before anything runs (every issue reported at once), executed with bounded call counts, steps scheduled by data dependency. The only things that can execute are the tools you mounted.
 
 ## Install
@@ -314,4 +316,4 @@ bun test/ai-sdk.ts      # end to end with the AI SDK: model authors, engine vali
 
 ## License
 
-MIT
+[Apache-2.0](https://github.com/vercel-labs/callscript/blob/main/LICENSE)

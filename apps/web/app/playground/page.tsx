@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { Playground } from "@/components/playground";
 import { SiteHeader } from "@/components/site-header";
 
-const GITHUB = "https://github.com/better-auth/callscript";
+const GITHUB = "https://github.com/vercel-labs/callscript";
 
 export const metadata: Metadata = {
 	title: "CallScript playground",

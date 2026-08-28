@@ -3,7 +3,7 @@ import { SiteHeader } from "@/components/site-header";
 import { Tabs } from "@/components/tabs";
 import { Toc } from "@/components/toc";
 
-const GITHUB = "https://github.com/better-auth/callscript";
+const GITHUB = "https://github.com/vercel-labs/callscript";
 
 function K({ children }: { children: React.ReactNode }) {
 	return (
@@ -447,6 +447,9 @@ export default function Home() {
 						</h1>
 						<p className="mt-4 text-lg font-medium tracking-tight text-ink sm:text-xl">
 							Code Mode, without the sandbox.
+						</p>
+						<p className="mt-2 text-sm text-dim">
+							An experimental Vercel Labs project - APIs may change.
 						</p>
 						<p className="mt-4 max-w-[60ch] text-base leading-7 text-dim">
 							The model writes a subset of JavaScript; callscript turns it into

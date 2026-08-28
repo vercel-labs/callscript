@@ -3,7 +3,12 @@
 	"version": "0.1.0",
 	"type": "module",
 	"description": "a tool-calling script language for LLMs - the model authors ONE small script (plain JS, compiled to a validated, bounded, inert JSON plan - never executed) instead of calling tools one at a time. Adapter-based: mount AI SDK tools or plain { name, execute } literals",
-	"license": "MIT",
+	"license": "Apache-2.0",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/vercel-labs/callscript.git"
+	},
+	"homepage": "https://callscript.dev",
 	"author": "Bereket Engida",
 	"keywords": [
 		"llm",
