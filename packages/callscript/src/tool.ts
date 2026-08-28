@@ -22,9 +22,9 @@ export type JsonSchema = Record<string, unknown>;
 /**
  * Everything a dispatch carries besides the args: which step is calling
  * and why, the re-entry channel (`attempt`, `resolutions`,
- * `suspensions` - see `CallContext`), and the scope the run executes
- * in, when the host passed one - how a compiled script mounted as a
- * tool joins its caller's session.
+ * `suspensions` - see `CallContext`), and the hosting run's session
+ * record - how a compiled script mounted as a tool joins its caller's
+ * session.
  */
 export interface ToolCallContext extends CallContext {
 	/** Id of the step making this call. */
@@ -35,8 +35,12 @@ export interface ToolCallContext extends CallContext {
 	reason?: string;
 	/** 0-based element index when part of an `each` fan-out. */
 	itemIndex?: number;
-	/** The scope of the run, when one was passed to `engine.run`. */
-	scope?: ScriptScope;
+	/** The hosting run's accumulated session record at dispatch time. */
+	state?: RunState;
+	/** Merge a settlement record back into the hosting run - how a
+	 * compiled script tool's settled steps survive into the caller's
+	 * `result.state` (so a resumed run reuses them). */
+	persist?: (state: RunState) => void;
 }
 
 /**
@@ -82,21 +86,6 @@ export type ToolMap<TS extends readonly AnyScriptTool[]> = {
 export const tool = <K extends string, A = void, R = unknown>(
 	definition: ScriptTool<K, A, R>,
 ): ScriptTool<K, A, R> => definition;
-
-/**
- * The session as a VALUE - a plain object holding the accumulated run
- * record. Runs handed the same scope share it: settled steps are
- * reused and published step outputs are readable from later scripts.
- */
-export interface ScriptScope {
-	/** The accumulated session record - every run in the scope merges in. */
-	state?: RunState;
-}
-
-/** Mint a scope. Prefer `engine.scope()`; this is the bare form. */
-export const createScope = (): ScriptScope => ({
-	state: undefined,
-});
 
 /** Re-exported for adapter authors: what a resolution payload may be. */
 export type { JsonValue };

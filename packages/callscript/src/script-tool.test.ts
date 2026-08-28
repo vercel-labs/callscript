@@ -6,6 +6,7 @@ import {
 	SuspendSignal,
 } from "./execute";
 import { tool } from "./tool";
+import type { RunState } from "./types";
 import { ScriptValidationError } from "./validate";
 
 /* ------------------------------- fixtures -------------------------------- */
@@ -32,34 +33,28 @@ const makeTools = () => {
 	return { listIssues, closeIssue, calls: () => listCalls };
 };
 
-/* --------------------- the session lives in the scope --------------------- */
+/* --------------------- the session is the state value --------------------- */
 
-describe("scope as session", () => {
-	it("two runs sharing a scope share the session record - no state threading", async () => {
+describe("state as session", () => {
+	it("threading result.state continues the session - settled steps reused", async () => {
 		const { listIssues, closeIssue, calls } = makeTools();
 		const engine = callscript({ tools: [listIssues, closeIssue] });
-		const scope = engine.scope();
 
-		const first = await engine.run(
-			{
-				script: {
-					steps: [{ id: "issues", call: "issues.list", args: { repo: "api" } }],
-				},
+		const first = await engine.run({
+			script: {
+				steps: [{ id: "issues", call: "issues.list", args: { repo: "api" } }],
 			},
-			scope,
-		);
+		});
 		expect(first.status).toBe("ok");
 
 		// `issues` has no producing step here - it is a session variable,
-		// carried by the scope's accumulated state, validated at the door.
-		const second = await engine.run(
-			{
-				script: {
-					steps: [{ id: "titles", let: "issues.map(i => i.title)" }],
-				},
+		// carried by the threaded state, validated at the door.
+		const second = await engine.run({
+			script: {
+				steps: [{ id: "titles", let: "issues.map(i => i.title)" }],
 			},
-			scope,
-		);
+			state: first.state,
+		});
 		expect(second.status).toBe("ok");
 		if (second.status === "ok") {
 			expect(second.output).toEqual(["old bug", "fresh bug", "old chore"]);
@@ -67,7 +62,7 @@ describe("scope as session", () => {
 		expect(calls()).toBe(1); // nothing re-fetched
 	});
 
-	it("without a shared scope, runs stay isolated", async () => {
+	it("without threaded state, runs stay isolated", async () => {
 		const { listIssues } = makeTools();
 		const engine = callscript({ tools: [listIssues] });
 		await engine.run({
@@ -82,77 +77,64 @@ describe("scope as session", () => {
 		).toThrow(ScriptValidationError);
 	});
 
-	it("explicit state still wins over the scope", async () => {
+	it("the state is plain data - a JSON round-trip continues the session", async () => {
 		const { listIssues } = makeTools();
 		const engine = callscript({ tools: [listIssues] });
-		const scope = engine.scope();
-		const first = await engine.run(
-			{
-				script: {
-					steps: [{ id: "issues", call: "issues.list", args: { repo: "api" } }],
-				},
+		const first = await engine.run({
+			script: {
+				steps: [{ id: "issues", call: "issues.list", args: { repo: "api" } }],
 			},
-			scope,
-		);
+		});
 		if (first.status !== "ok") throw new Error("expected ok");
-		// A fresh scope plus the explicit record: the state option is honored.
+		// Serialize into any store, deserialize later - the session survives.
+		const stored = JSON.parse(JSON.stringify(first.state));
 		const second = await engine.run({
 			script: { steps: [{ id: "n", let: "issues.length" }] },
-			state: first.state,
+			state: stored,
 		});
 		expect(second.status).toBe("ok");
 		if (second.status === "ok") expect(second.output).toBe(3);
 	});
 
-	it("tools read the session off the dispatch context's scope", async () => {
+	it("tools read the session off the dispatch context's state", async () => {
 		const { listIssues } = makeTools();
 		const readBack = tool({
 			name: "session.stale",
 			execute: (_args: void, ctx) =>
-				ctx.scope?.state
-					? publishedVariables(ctx.scope.state).stale
-					: undefined,
+				ctx.state ? publishedVariables(ctx.state).stale : undefined,
 		});
 		const engine = callscript({ tools: [listIssues, readBack] });
-		const scope = engine.scope();
 
-		await engine.run(
-			{
-				script: {
-					steps: [
-						{ id: "issues", call: "issues.list", args: { repo: "api" } },
-						{
-							id: "stale",
-							let: "issues.filter(i => i.stale).map(i => i.number)",
-						},
-					],
-				},
+		const first = await engine.run({
+			script: {
+				steps: [
+					{ id: "issues", call: "issues.list", args: { repo: "api" } },
+					{
+						id: "stale",
+						let: "issues.filter(i => i.stale).map(i => i.number)",
+					},
+				],
 			},
-			scope,
-		);
+		});
 
-		// A later run's TOOL reads the settled step's output off the scope.
-		const second = await engine.run(
-			{ script: { steps: [{ id: "got", call: "session.stale" }] } },
-			scope,
-		);
+		// A later run's TOOL reads the settled step's output off the state.
+		const second = await engine.run({
+			script: { steps: [{ id: "got", call: "session.stale" }] },
+			state: first.state,
+		});
 		expect(second.status).toBe("ok");
 		if (second.status === "ok") expect(second.output).toEqual([1, 3]);
 	});
 
-	it("the scope's state is directly inspectable", async () => {
+	it("the run's state is directly inspectable", async () => {
 		const { listIssues } = makeTools();
 		const engine = callscript({ tools: [listIssues] });
-		const scope = engine.scope();
-		await engine.run(
-			{
-				script: {
-					steps: [{ id: "issues", call: "issues.list", args: { repo: "api" } }],
-				},
+		const result = await engine.run({
+			script: {
+				steps: [{ id: "issues", call: "issues.list", args: { repo: "api" } }],
 			},
-			scope,
-		);
-		expect(scope.state?.steps.issues?.status).toBe("done");
+		});
+		expect(result.state.steps.issues?.status).toBe("done");
 	});
 });
 
@@ -213,26 +195,30 @@ describe("engine.tool - a script compiled into a tool", () => {
 		// Bare call: no session, no `issues` - refused before anything runs.
 		expect(() => summarize.execute()).toThrow(/Unknown reference "issues"/);
 
-		// In a scope whose session has it, the same call just works.
-		const scope = engine.scope();
-		await engine.run(
-			{
-				script: {
-					steps: [{ id: "issues", call: "issues.list", args: { repo: "api" } }],
-				},
+		// Handed a session state that has it, the same call just works.
+		const first = await engine.run({
+			script: {
+				steps: [{ id: "issues", call: "issues.list", args: { repo: "api" } }],
 			},
-			scope,
-		);
-		await expect(summarize.execute(undefined, { scope })).resolves.toBe(3);
+		});
+		await expect(
+			summarize.execute(undefined, { state: first.state }),
+		).resolves.toBe(3);
 	});
 
-	it("a return gate throws EarlyReturnSignal; re-calling in the scope resumes", async () => {
+	it("a return gate throws EarlyReturnSignal; re-calling with the state resumes", async () => {
 		const { listIssues, closeIssue, calls } = makeTools();
 		const engine = callscript({ tools: [listIssues, closeIssue] });
 		const closeStale = engine.tool("github.closeStale", staleScript);
-		const scope = engine.scope();
 
-		const gate = await closeStale.execute({}, { scope }).then(
+		// Direct calls thread the session themselves: `persist` hands the
+		// settled record back (it fires even when a gate throws).
+		let state: RunState | undefined;
+		const persist = (s: RunState) => {
+			state = s;
+		};
+
+		const gate = await closeStale.execute({}, { state, persist }).then(
 			() => {
 				throw new Error("expected the gate to fire");
 			},
@@ -241,7 +227,10 @@ describe("engine.tool - a script compiled into a tool", () => {
 		expect(gate).toBeInstanceOf(EarlyReturnSignal);
 		expect((gate as EarlyReturnSignal).value).toEqual({ confirm: [1, 3] });
 
-		const result = await closeStale.execute({ approved: true }, { scope });
+		const result = await closeStale.execute(
+			{ approved: true },
+			{ state, persist },
+		);
 		expect(result).toEqual({ closed: [1, 3] });
 		expect(calls()).toBe(1); // the list step was reused, not re-fetched
 	});
@@ -258,12 +247,17 @@ describe("engine.tool - a script compiled into a tool", () => {
 		const check = engine.tool("otp.check", {
 			steps: [{ id: "r", call: "otp.verify", args: { code: "=input.code" } }],
 		} as any);
-		const scope = engine.scope();
+		let state: RunState | undefined;
+		const persist = (s: RunState) => {
+			state = s;
+		};
 
-		await expect(check.execute({}, { scope })).rejects.toThrow(SuspendSignal);
-		await expect(check.execute({ code: "42" }, { scope })).resolves.toEqual({
-			ok: true,
-		});
+		await expect(check.execute({}, { state, persist })).rejects.toThrow(
+			SuspendSignal,
+		);
+		await expect(
+			check.execute({ code: "42" }, { state, persist }),
+		).resolves.toEqual({ ok: true });
 	});
 
 	it("mounts as a TOOL of another engine - and its gate ends the hosting run", async () => {
@@ -292,22 +286,21 @@ describe("engine.tool - a script compiled into a tool", () => {
 				},
 			],
 		});
-		const scope = outer.scope();
-
 		// The INNER gate fires - the OUTER run ends early with its payload.
-		const first = await outer.run({ script: outerScript }, scope);
+		const first = await outer.run({ script: outerScript });
 		expect(first.status).toBe("ok");
 		if (first.status === "ok") {
 			expect(first.returnedAt).toBe("closed");
 			expect(first.output).toEqual({ confirm: [1, 3] });
 		}
 
-		// Approve: the shared scope carries BOTH sessions - the inner run
+		// Approve: the threaded state carries BOTH sessions - the inner run
 		// reuses its settled list step, the outer continues past the gate.
-		const second = await outer.run(
-			{ script: outerScript, input: { approved: true } },
-			scope,
-		);
+		const second = await outer.run({
+			script: outerScript,
+			input: { approved: true },
+			state: first.state,
+		});
 		expect(second.status).toBe("ok");
 		if (second.status === "ok") {
 			expect(second.output).toEqual({ sent: "closed 2" });

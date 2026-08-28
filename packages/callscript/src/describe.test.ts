@@ -296,30 +296,25 @@ describe("engine.toolDefinition", () => {
 /* ------------------------------ session card ------------------------------ */
 
 describe("engine.context", () => {
-	it("is empty without a scope or before any run", () => {
+	it("is empty without a state or before any run", () => {
 		const engine = makeEngine();
 		expect(engine.context()).toContain("(empty");
-		expect(engine.context(engine.scope())).toContain("(empty");
 	});
 
 	it("previews step outputs published by prior runs", async () => {
 		const engine = makeEngine();
-		const scope = engine.scope();
-		await engine.run(
-			{
-				script: {
-					steps: [
-						{ id: "issues", call: "issues.list", args: { repo: "api" } },
-						{
-							id: "stale",
-							let: "issues.filter(i => i.stale).map(i => i.number)",
-						},
-					],
-				},
+		const result = await engine.run({
+			script: {
+				steps: [
+					{ id: "issues", call: "issues.list", args: { repo: "api" } },
+					{
+						id: "stale",
+						let: "issues.filter(i => i.stale).map(i => i.number)",
+					},
+				],
 			},
-			scope,
-		);
-		const card = engine.context(scope);
+		});
+		const card = engine.context(result.state);
 		expect(card).toContain("session variables");
 		// a step output: first element preview + count
 		expect(card).toMatch(

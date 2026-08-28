@@ -172,7 +172,7 @@ await generateText({
 });
 ```
 
-`toAISDKTools(engine)` wraps `engine.tools()`, the host-neutral trio. `execute` is the tool: it validates the script at the door (a rejected script returns `status: "invalid"` with every issue, for the model to retry), runs it against a shared session scope, and returns the outcome without the session state (that rides the scope, never the prompt). `search` and `describe` exist so the prompt doesn't carry every tool definition ahead of time: `search` matches mounted tools by keyword and returns names with one-line summaries, `describe` returns the full signature cards for the names a script will actually call. With 20 or fewer tools the cards inline into `execute`'s description; past that (or with `inlineTools: false`) the model discovers tools through `search`/`describe` instead, so the prompt stays small however many tools you mount. Pass `scope` to join an existing session, `names` to rename the tools. Prefer manual wiring? `engine.toolDefinition()` still returns the one-tool `description`/`inputSchema` to hand a tool interface yourself.
+`toAISDKTools(engine)` wraps `engine.tools()`, the host-neutral trio. `execute` is the tool: it validates the script at the door (a rejected script returns `status: "invalid"` with every issue, for the model to retry), runs it against the pair's accumulated session, and returns the outcome without the session state (that stays host-side, never in the prompt). `search` and `describe` exist so the prompt doesn't carry every tool definition ahead of time: `search` matches mounted tools by keyword and returns names with one-line summaries, `describe` returns the full signature cards for the names a script will actually call. With 20 or fewer tools the cards inline into `execute`'s description; past that (or with `inlineTools: false`) the model discovers tools through `search`/`describe` instead, so the prompt stays small however many tools you mount. Pass `state` to seed the session and `onState` to observe the record after every run (persist it anywhere - it is plain data), `names` to rename the tools. Prefer manual wiring? `engine.toolDefinition()` still returns the one-tool `description`/`inputSchema` to hand a tool interface yourself.
 
 For the task above the model authors one script - which the engine compiles into the inert plan, no code ever running:
 
@@ -236,14 +236,14 @@ The suspended run comes back as a serializable `state` record: store it anywhere
 
 ## Sessions
 
-A session is just the accumulated run record. Runs handed the same scope share it: settled steps are reused, and a later script references an earlier run's step outputs by name - no re-fetch, no state threading:
+A session is just the accumulated run record - `result.state`, a plain serializable value. Thread it to continue: settled steps are reused, and a later script references an earlier run's step outputs by name - no re-fetch:
 
 ```ts
-const scope = engine.scope();
-
-await engine.run({ script: one }, scope);
-await engine.run({ script: two }, scope); // `two` reads `one`'s step outputs
+const one = await engine.run({ script: first });
+const two = await engine.run({ script: second, state: one.state }); // reads `first`'s step outputs
 ```
+
+Keep it in a variable, or `JSON.stringify` it into any KV/database between turns - it survives a restart. For long-lived suspended runs, the durable runner persists the whole lifecycle behind a four-call storage contract.
 
 ## The error branch of the dataflow
 
@@ -273,9 +273,10 @@ which compiles to:
 ```ts
 const closeStale = engine.tool("github.closeStale", script);
 
-const scope = engine.scope();
-await closeStale.execute({}, { scope });                 // gate → throws EarlyReturnSignal({ confirm: [...] })
-await closeStale.execute({ approved: true }, { scope }); // resumes - settled steps reused
+let state;
+const persist = (s) => (state = s); // hands the settled record back, even when a gate throws
+await closeStale.execute({}, { state, persist });                 // gate → throws EarlyReturnSignal({ confirm: [...] })
+await closeStale.execute({ approved: true }, { state, persist }); // resumes - settled steps reused
 ```
 
 ## Typed authoring

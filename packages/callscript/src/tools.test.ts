@@ -101,7 +101,7 @@ describe("engine.tools", () => {
 		}
 	});
 
-	it("runs share the pair's scope: later scripts read earlier outputs", async () => {
+	it("runs share the pair's session: later scripts read earlier outputs", async () => {
 		const { execute } = engine().tools();
 		const first = await execute.execute({
 			steps: [
@@ -115,7 +115,7 @@ describe("engine.tools", () => {
 		expect(second).toEqual({ status: "ok", output: 2 });
 	});
 
-	it("suspended runs surface suspensions and resume on the same scope", async () => {
+	it("suspended runs surface suspensions; onState hands the host the record", async () => {
 		const gate = tool({
 			name: "auth.verify",
 			execute: (args: { code?: string }) => {
@@ -124,15 +124,15 @@ describe("engine.tools", () => {
 			},
 		});
 		const e = callscript({ tools: [gate] });
-		const scope = e.scope();
-		const { execute } = e.tools({ scope });
+		let state: import("./types").RunState | undefined;
+		const { execute } = e.tools({ onState: (s) => (state = s) });
 		const script = {
 			steps: [{ id: "v", call: "auth.verify", args: { code: "=input.code" } }],
 		};
 		const first = await execute.execute(script);
 		expect(first.status).toBe("suspended");
-		// the state rode the scope - a plain engine.run resumes it
-		const resumed = await e.run({ script, input: { code: "42" } }, scope);
+		// the record reached the host via onState - a plain engine.run resumes it
+		const resumed = await e.run({ script, input: { code: "42" }, state });
 		expect(resumed.status).toBe("ok");
 	});
 

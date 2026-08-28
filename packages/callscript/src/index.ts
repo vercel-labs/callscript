@@ -4,50 +4,8 @@
  * Everything else in src/ is internal - reachable, tested, but not part
  * of the v1 surface. */
 
-// the engine - mount tools, get the execute/search pair
-export {
-	type AgentDescribeInput,
-	type AgentExecuteResult,
-	type AgentSearchInput,
-	type AgentTool,
-	type ToolsOptions,
-	type CompiledScriptTool,
-	earlyReturn,
-	type RunInput,
-	type ScriptEngine,
-	type ScriptEngineOptions,
-	type SessionOptions,
-	type SessionRunner,
-	callscript,
-	suspend,
-} from "./engine";
-
-// the tool contract - the one seam adapters (and literals) fill
-export {
-	type AnyScriptTool,
-	createScope,
-	type JsonSchema,
-	type ScriptScope,
-	type ScriptTool,
-	type ToolCallContext,
-	type ToolMap,
-	tool,
-} from "./tool";
-
-// the JS frontend - model-authored JS in, inert plan out
-export { type ParseJsOptions, parseJsScript } from "./js";
-
-// the validator - the whole plan checked before anything runs
-export {
-	type ScriptIssue,
-	ScriptValidationError,
-	type ValidateOptions,
-	validateScript,
-} from "./validate";
-
 // analysis + rendering - what an authorizer reads before approving
 export { analyzeScript, renderScript } from "./analyze";
-
 // prompt-building blocks for hosts that assemble their own cards
 export {
 	type IntrospectableTool,
@@ -57,12 +15,45 @@ export {
 	toolCard,
 	toolCards,
 } from "./describe";
-
+// the durable runner - experimental, see durable.ts
+export * from "./durable";
+// the engine - mount tools, get the execute/search pair
+export {
+	type AgentDescribeInput,
+	type AgentExecuteResult,
+	type AgentSearchInput,
+	type AgentTool,
+	type CompiledScriptTool,
+	callscript,
+	earlyReturn,
+	type RunInput,
+	type ScriptEngine,
+	type ScriptEngineOptions,
+	type SessionOptions,
+	type SessionRunner,
+	suspend,
+	type ToolsOptions,
+} from "./engine";
 // session inspection
 export { publishedVariables } from "./execute";
+// the JS frontend - model-authored JS in, inert plan out
+export { type ParseJsOptions, parseJsScript } from "./js";
+// the tool contract - the one seam adapters (and literals) fill
+export {
+	type AnyScriptTool,
+	type JsonSchema,
+	type ScriptTool,
+	type ToolCallContext,
+	type ToolMap,
+	tool,
+} from "./tool";
 
 // the plan format - steps, limits, run records, and their guards
 export * from "./types";
-
-// the durable runner - experimental, see durable.ts
-export * from "./durable";
+// the validator - the whole plan checked before anything runs
+export {
+	type ScriptIssue,
+	ScriptValidationError,
+	type ValidateOptions,
+	validateScript,
+} from "./validate";

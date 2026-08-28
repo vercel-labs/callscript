@@ -11,10 +11,11 @@
  *   anything else before a run starts
  * - a script's `call` dispatches to the tool's `execute`; a thrown
  *   error's `code` surfaces as the step error's machine-readable code
- * - the SESSION is a plain scope object (`engine.scope()`): the run
- *   record accumulates on it, and runs handed the same scope share it
+ * - the SESSION is a plain serializable VALUE: the accumulated run
+ *   record rides `input.state` in and `result.state` out - keep it in
+ *   a variable, or serialize it into any store between turns
  * - a script COMPILES into a tool (`engine.tool`): mountable on another
- *   engine, its session joined through the caller's scope - and its
+ *   engine, its settlements merged into the caller's record - and its
  *   gates compose (an inner approval gate ends the hosting run early)
  *
  * The language core (expressions, validation, limits, records, the
@@ -48,13 +49,11 @@ import {
 	type StartOptions,
 	type StartResult,
 } from "./runner";
-import {
-	type AnyScriptTool,
-	createScope,
-	type ScriptScope,
-	type ScriptTool,
-	type ToolCallContext,
-	type ToolMap,
+import type {
+	AnyScriptTool,
+	ScriptTool,
+	ToolCallContext,
+	ToolMap,
 } from "./tool";
 import type { TypedScriptOf } from "./typed";
 import type {
@@ -98,23 +97,23 @@ export interface ScriptEngineOptions<TS extends readonly AnyScriptTool[]> {
 }
 
 /** One execution: the script plus the per-execute channel (`input`,
- * suspension `resolutions`, ...). Session state is implicit - it lives
- * on the scope passed alongside - but an explicit `state` still wins
- * for hosts that manage records themselves. */
+ * suspension `resolutions`, ...). The session is the `state` value:
+ * pass the previous run's `result.state` to continue it. */
 export interface RunInput {
 	/** The script - raw model JSON or a validated/typed one. Validated at
 	 * the door either way, every issue reported. */
 	script: unknown;
 	/** Per-execute data bound as `input` in every expression. Ephemeral. */
 	input?: unknown;
-	/** Explicit session state - overrides the scope's accumulated record. */
+	/** The accumulated session record - the previous run's `result.state`.
+	 * Plain serializable data: store it anywhere between turns. */
 	state?: RunState;
 	/** Answers to outstanding suspensions, by key. */
 	resolutions?: Record<string, JsonValue>;
 	/** Host-injected session variables (their names validate as referable). */
 	variables?: Record<string, unknown>;
-	/** Default "all" here (unlike bare executeScript): the session lives on
-	 * the scope, and published variables need outputs to survive the run. */
+	/** Default "all" here (unlike bare executeScript): the session IS the
+	 * record, and published variables need outputs to survive the run. */
 	retainOutputs?: "live" | "all";
 }
 
@@ -128,11 +127,13 @@ export type SessionRunner = Omit<ScriptRunner, "start"> & {
 
 /**
  * A script compiled into a tool: mountable on another engine, where a
- * `call` naming it runs the whole script - against the CALLER's scope,
- * so the inner session rides the outer one. Ends and pauses COMPOSE: a
- * `return` gate throws `EarlyReturnSignal` (a hosting run ends early
- * with the payload; a direct caller catches it), a suspension throws
- * `SuspendSignal`. Call it directly with `execute(input, { scope })`.
+ * `call` naming it runs the whole script - against the CALLER's session
+ * record, its settlements merged back in, so the inner session rides
+ * the outer one. Ends and pauses COMPOSE: a `return` gate throws
+ * `EarlyReturnSignal` (a hosting run ends early with the payload; a
+ * direct caller catches it), a suspension throws `SuspendSignal`. Call
+ * it directly with `execute(input, { state, persist })` to thread a
+ * session yourself.
  */
 export type CompiledScriptTool<
 	K extends string = string,
@@ -145,7 +146,8 @@ export type CompiledScriptTool<
 	/** Free names the script reads from the session - its data requires,
 	 * checked against the live session on every call. */
 	readonly external: readonly string[];
-	/** Direct-call form: ctx is optional (pass `{ scope }` to join one). */
+	/** Direct-call form: ctx is optional (pass `{ state, persist }` to
+	 * join a session you thread yourself). */
 	execute(args?: A, ctx?: Partial<ToolCallContext>): Promise<R>;
 };
 
@@ -160,10 +162,12 @@ export interface AgentTool<A = any, R = unknown> {
 }
 
 export interface ToolsOptions {
-	/** The session scope runs execute against - state persists across
-	 * `execute` calls (suspended runs resume here). Default: a fresh
-	 * scope minted per `tools()` call. */
-	scope?: ScriptScope;
+	/** Seed the pair's session with an existing record (e.g. one you
+	 * deserialized from storage). Default: starts empty. */
+	state?: RunState;
+	/** Observe the accumulated record after every `execute` - the hook
+	 * for persisting the session (it is plain serializable data). */
+	onState?: (state: RunState) => void;
 	/** Inline every tool card in the `execute` description. Default: true
 	 * up to 20 mounted tools; past that the cards move behind
 	 * `search`/`describe`, so the prompt stays small and the model loads
@@ -176,7 +180,7 @@ export interface ToolsOptions {
 }
 
 /** What the `execute` agent tool returns to the model: the run outcome
- * without the session `state` (that rides the scope, not the prompt). */
+ * without the session `state` (that stays host-side, not in the prompt). */
 export type AgentExecuteResult =
 	| { status: "ok"; output: unknown; returnedAt?: string }
 	| { status: "error"; at: string; error: SerializedError }
@@ -196,23 +200,19 @@ export interface AgentDescribeInput {
 }
 
 export interface ScriptEngine<TS extends readonly AnyScriptTool[]> {
-	/** Execute one script (validated at the door). A `scope` makes it a
-	 * session run: state rides the scope. */
-	run(input: RunInput, scope?: ScriptScope): Promise<ExecuteResult>;
 	/**
-	 * Mint a session scope - the session as a VALUE. Runs and compiled
-	 * tools handed it share the accumulated record, so re-executing
-	 * (approvals, suspensions) needs no state threading:
+	 * Execute one script (validated at the door). The session is the
+	 * `state` value: `result.state` is the full accumulated record -
+	 * pass it to the next run to continue the session (approvals,
+	 * suspensions, published outputs), or serialize it into any store:
 	 *
-	 *   const s = engine.scope();
-	 *   await engine.run({ script }, s);                            // gate fires
-	 *   await engine.run({ script, input: { approved: true } }, s); // resumes
+	 *   const one = await engine.run({ script });                  // gate fires
+	 *   await engine.run({ script, input: { approved: true }, state: one.state });
 	 */
-	scope(): ScriptScope;
+	run(input: RunInput): Promise<ExecuteResult>;
 	/** Open a session: async runs, `await.<id>` joins, the settlement
-	 * digest, and an accumulated record every new run executes against.
-	 * A `scope` absorbs settlements into it. */
-	session(options?: SessionOptions, scope?: ScriptScope): SessionRunner;
+	 * digest, and an accumulated record every new run executes against. */
+	session(options?: SessionOptions): SessionRunner;
 	/**
 	 * TYPED script authoring: `call` is the union of mounted tool names
 	 * and `args` is that tool's argument type (expressions allowed
@@ -235,7 +235,7 @@ export interface ScriptEngine<TS extends readonly AnyScriptTool[]> {
 	 * The STATIC prompt context for an authoring model: the language card
 	 * (rendered against this engine's limits) and one signature card per
 	 * mounted tool. Stable for the engine's lifetime - put it in the
-	 * cacheable prefix and pair it with `context(scope)` for the live part.
+	 * cacheable prefix and pair it with `context(state)` for the live part.
 	 */
 	describe(): string;
 	/**
@@ -246,7 +246,7 @@ export interface ScriptEngine<TS extends readonly AnyScriptTool[]> {
 	 * (what a script is, expression semantics, ordering rules) plus one
 	 * TS-ish signature per mounted tool. Hand both to the tool interface
 	 * verbatim; static per engine, so it caches like `describe()`. Pair
-	 * with `context(scope)` for the live session card.
+	 * with `context(state)` for the live session card.
 	 */
 	toolDefinition(): {
 		description: string;
@@ -254,10 +254,11 @@ export interface ScriptEngine<TS extends readonly AnyScriptTool[]> {
 	};
 	/**
 	 * The engine as agent TOOLS, ready to mount on any host. `execute`
-	 * is the tool: it runs one script against a shared session scope
-	 * (invalid scripts come back as `status: "invalid"` with every
-	 * issue, for the model to retry; the session `state` stays on the
-	 * scope, never in the result). `search` and `describe` exist so the
+	 * is the tool: it runs one script against the pair's accumulated
+	 * session (invalid scripts come back as `status: "invalid"` with
+	 * every issue, for the model to retry; the session `state` stays
+	 * host-side - observe it with `onState` - never in the result).
+	 * `search` and `describe` exist so the
 	 * prompt doesn't carry every tool definition ahead of time: `search`
 	 * finds mounted tools by keyword (names plus one-line summaries),
 	 * `describe` renders the full signature cards for the names a script
@@ -272,10 +273,10 @@ export interface ScriptEngine<TS extends readonly AnyScriptTool[]> {
 	};
 	/**
 	 * The LIVE prompt context: every name a script can reference in this
-	 * scope right now - step outputs published by prior runs - with
-	 * short value previews. Re-render per turn.
+	 * session right now - step outputs published by prior runs - with
+	 * short value previews. Re-render per turn off the latest `result.state`.
 	 */
-	context(scope?: ScriptScope): string;
+	context(state?: RunState): string;
 	/** Validate a script against the registry; throws with EVERY issue. */
 	validate(input: unknown, overrides?: ValidateOptions): Script;
 	analyze: typeof analyzeScript;
@@ -322,20 +323,20 @@ export const callscript = <const TS extends readonly AnyScriptTool[]>(
 		...Object.keys(variables),
 	];
 
-	/** Persist a run's outcome into the scope: the record merges in,
-	 * latest settlement per step - so the next run in the scope reuses
-	 * settled steps and reads published outputs as session variables. */
-	const persist = (scope: ScriptScope | undefined, state: RunState) => {
-		if (!scope) return;
-		const prior = scope.state;
-		scope.state = prior
-			? { ...state, steps: { ...prior.steps, ...state.steps } }
-			: state;
-	};
+	/** Merge a settlement record into the accumulated session record -
+	 * latest settlement per step wins. */
+	const merge = (prior: RunState | undefined, state: RunState): RunState =>
+		prior ? { ...state, steps: { ...prior.steps, ...state.steps } } : state;
+
+	/** The run's internal record accumulator: settlements a mounted
+	 * compiled tool persists mid-run land here, so they surface in the
+	 * run's `result.state` and a resumed run reuses them. Plumbing only -
+	 * never part of the public surface. */
+	type RecordBox = { state?: RunState };
 
 	/** The one dispatcher: a resolved call goes to the tool whose name
 	 * matches. */
-	const handlersFrom = (scope?: ScriptScope): ExecuteHandlers => ({
+	const handlersFrom = (box: RecordBox): ExecuteHandlers => ({
 		call: async (request, ctx) => {
 			const tool = registry.get(request.tool);
 			if (tool === undefined) {
@@ -351,7 +352,10 @@ export const callscript = <const TS extends readonly AnyScriptTool[]>(
 				toolName: request.tool,
 				reason: request.reason,
 				itemIndex: request.itemIndex,
-				scope,
+				state: box.state,
+				persist: (state) => {
+					box.state = merge(box.state, state);
+				},
 			};
 			return tool.execute(request.args, callContext);
 		},
@@ -359,18 +363,16 @@ export const callscript = <const TS extends readonly AnyScriptTool[]>(
 
 	// Sync-start on purpose: a validation failure THROWS from the call
 	// (contract at the door), only execution itself is async.
-	const run = (
-		input: RunInput,
-		scope?: ScriptScope,
-	): Promise<ExecuteResult> => {
+	const run = (input: RunInput): Promise<ExecuteResult> => {
 		const { script, ...exec } = input ?? {};
-		const state = exec.state ?? scope?.state;
+		const state = exec.state;
 		const variables = { ...exec.variables };
 		const validated = validate(script, {
 			variables: referable(state, variables),
 		});
+		const box: RecordBox = { state };
 		return executeScript(validated, {
-			handlers: handlersFrom(scope),
+			handlers: handlersFrom(box),
 			limits: options.limits,
 			suspend: options.suspend,
 			input: exec.input,
@@ -379,8 +381,10 @@ export const callscript = <const TS extends readonly AnyScriptTool[]>(
 			variables,
 			retainOutputs: exec.retainOutputs ?? "all",
 		}).then((result) => {
-			persist(scope, result.state);
-			return result;
+			// Fold in settlements mounted compiled tools persisted mid-run,
+			// so `result.state` is the WHOLE session - the one value to keep.
+			const merged = merge(box.state, result.state);
+			return { ...result, state: merged, record: merged };
 		});
 	};
 
@@ -429,14 +433,14 @@ export const callscript = <const TS extends readonly AnyScriptTool[]>(
 		// Sync-start: a stale external or bad script THROWS from the call
 		// (contract at the door), only execution itself is async.
 		const execute = (args?: any, ctx?: Partial<ToolCallContext>) => {
-			const scope = ctx?.scope;
-			const state = scope?.state;
+			const state = ctx?.state;
 			const variables = {};
 			const script = validate(scriptInput, {
 				variables: referable(state, variables),
 			});
+			const box: RecordBox = { state };
 			return executeScript(script, {
-				handlers: handlersFrom(scope),
+				handlers: handlersFrom(box),
 				limits: options.limits,
 				suspend: options.suspend,
 				input: args,
@@ -444,7 +448,8 @@ export const callscript = <const TS extends readonly AnyScriptTool[]>(
 				variables,
 				retainOutputs: "all",
 			}).then((result) => {
-				persist(scope, result.state);
+				// The inner session merges back into the caller's record.
+				ctx?.persist?.(merge(box.state, result.state));
 				if (result.status === "error") {
 					throw new ScriptExecutionError(
 						result.error.message,
@@ -475,38 +480,27 @@ export const callscript = <const TS extends readonly AnyScriptTool[]>(
 		};
 	};
 
-	const session = (
-		opts: SessionOptions = {},
-		scope?: ScriptScope,
-	): SessionRunner => {
+	const session = (opts: SessionOptions = {}): SessionRunner => {
+		const box: RecordBox = {};
 		const runner = createRunner({
 			...opts,
 			limits: { ...options.limits, ...opts.limits },
-			handlers: handlersFrom(scope),
-		});
-		const absorb = (record: RunState | undefined) => {
-			if (record) persist(scope, record);
-		};
-		// Detached settlements land in the scope too.
-		runner.onRunSettled((settled) => {
-			if (settled.status !== "cancelled") absorb(settled.record);
+			handlers: handlersFrom(box),
 		});
 		return {
 			...runner,
-			// The runner serves the `await.*` join namespace, and both its
-			// accumulated session and the scope's vars are referable -
-			// captured at START time, not session creation.
+			// The runner serves the `await.*` join namespace, and its
+			// accumulated session vars are referable - captured at START
+			// time, not session creation.
 			start: async (script, startOpts) => {
 				const variables = { ...startOpts?.variables };
-				const result = await runner.start(
+				return runner.start(
 					validate(script, {
 						tools: [...tools, "await.*"],
 						variables: referable(runner.session(), variables),
 					}),
 					{ ...startOpts, variables },
 				);
-				if (result.status !== "pending") absorb(result.record);
-				return result;
 			},
 		};
 	};
@@ -550,7 +544,9 @@ export const callscript = <const TS extends readonly AnyScriptTool[]>(
 
 	/** The engine as agent tools - see `ScriptEngine.tools`. */
 	const agentTools = (opts: ToolsOptions = {}) => {
-		const scope = opts.scope ?? createScope();
+		// The pair's session: one in-memory record, observable through
+		// `onState` for hosts that persist it (it is plain data).
+		let sessionState: RunState | undefined = opts.state;
 		const format = opts.format ?? engineFormat;
 		const executeName = opts.names?.execute ?? "execute";
 		const searchName = opts.names?.search ?? "search";
@@ -588,7 +584,9 @@ export const callscript = <const TS extends readonly AnyScriptTool[]>(
 						: input;
 				let result: ExecuteResult;
 				try {
-					result = await run({ script }, scope);
+					result = await run({ script, state: sessionState });
+					sessionState = result.state;
+					opts.onState?.(sessionState);
 				} catch (err) {
 					// Rejected at the door: the issues go back for a retry,
 					// anything else (a host bug) stays a real throw.
@@ -648,10 +646,7 @@ export const callscript = <const TS extends readonly AnyScriptTool[]>(
 					);
 				}
 				const lines = matched.map((tool) => {
-					const summary = tool.description
-						?.trim()
-						.split("\n", 1)[0]
-						?.trim();
+					const summary = tool.description?.trim().split("\n", 1)[0]?.trim();
 					return summary ? `${tool.name} - ${summary}` : tool.name;
 				});
 				return (
@@ -693,12 +688,11 @@ export const callscript = <const TS extends readonly AnyScriptTool[]>(
 		return { execute, search, describe: describeTool };
 	};
 
-	/** The live prompt context: what THIS scope's expressions can read. */
-	const context = (scope?: ScriptScope): string => {
+	/** The live prompt context: what THIS session's expressions can read. */
+	const context = (state?: RunState): string => {
 		const entries: SessionEntry[] = [];
-		if (scope) {
-			const published = scope.state ? publishedVariables(scope.state) : {};
-			for (const [name, value] of Object.entries(published)) {
+		if (state) {
+			for (const [name, value] of Object.entries(publishedVariables(state))) {
 				entries.push({ name, value });
 			}
 		}
@@ -707,7 +701,6 @@ export const callscript = <const TS extends readonly AnyScriptTool[]>(
 
 	return {
 		run,
-		scope: createScope,
 		session,
 		describe,
 		toolDefinition,

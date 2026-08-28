@@ -172,7 +172,7 @@ type ToolsHost = {
  *
  *   tools: toAISDKTools(engine)
  *
- * `execute` runs one script against a shared session scope (invalid
+ * `execute` runs one script against a shared in-memory session (invalid
  * scripts return their issues for the model to retry); `search` finds
  * mounted tools by keyword and `describe` renders their full signature
  * cards, so the prompt never carries every tool definition ahead of

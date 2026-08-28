@@ -59,28 +59,24 @@ const def = engine.toolDefinition();
 console.log("--- description (base card + tool signatures) ---\n");
 console.log(def.description);
 
-console.log("\n\n2. the LIVE prompt context - engine.context(scope):\n");
+console.log("\n\n2. the LIVE prompt context - engine.context(state):\n");
 
-const scope = engine.scope();
 console.log("before any run:");
-console.log(engine.context(scope));
+console.log(engine.context());
 
-await engine.run(
-	{
-		script: {
-			steps: [
-				{
-					id: "issues",
-					call: "github.listIssues",
-					args: { repo: "api" },
-					reason: "find stale issues",
-				},
-				{ id: "stale", let: "issues.filter(i => i.stale).map(i => i.number)" },
-			],
-		},
+const result = await engine.run({
+	script: {
+		steps: [
+			{
+				id: "issues",
+				call: "github.listIssues",
+				args: { repo: "api" },
+				reason: "find stale issues",
+			},
+			{ id: "stale", let: "issues.filter(i => i.stale).map(i => i.number)" },
+		],
 	},
-	scope,
-);
+});
 
 console.log("\nafter a run settled two steps:");
-console.log(engine.context(scope));
+console.log(engine.context(result.state));

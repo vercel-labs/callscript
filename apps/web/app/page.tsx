@@ -278,7 +278,7 @@ github.closeIssue({ repo: string, number: number }) -> { closed: number }
 				</p>
 				<Code
 					code={`
-const { execute, search, describe } = cs.tools({ scope });
+const { execute, search, describe } = cs.tools();
 `}
 				/>
 			</>
