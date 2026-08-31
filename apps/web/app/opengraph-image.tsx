@@ -24,15 +24,20 @@ export default async function Image() {
 				fontFamily: "Geist",
 			}}
 		>
-			<div
-				style={{
-					fontFamily: "Geist Mono",
-					fontSize: 24,
-					color: "#737373",
-				}}
+			<svg
+				height={32}
+				width={32}
+				viewBox="0 0 16 16"
+				strokeLinejoin="round"
+				aria-hidden="true"
 			>
-				callscript.dev
-			</div>
+				<path
+					fillRule="evenodd"
+					clipRule="evenodd"
+					d="M8 1L16 15H0L8 1Z"
+					fill="#f5f5f5"
+				/>
+			</svg>
 			<div
 				style={{
 					display: "flex",
