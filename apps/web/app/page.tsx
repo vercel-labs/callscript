@@ -470,7 +470,7 @@ export default function Home() {
 	"steps": [
 		{ "id": "issues", "call": "github.listIssues", "args": { "repo": "api" } },
 		{ "id": "stale", "let": "issues.filter(i => i.stale)" },
-		{ "call": "github.closeIssue", "each": "stale.map(i => ({ number: i.number }))", "max": 10 }
+		{ "call": "github.closeIssue", "each": "stale.map(i => ({ number: i.number }))" }
 	]
 }
 `}
