@@ -1,6 +1,5 @@
 "use client";
 
-import { type HighlightLang, toHtml, useHighlighter } from "@/lib/highlighter";
 import {
 	type AnyScriptTool,
 	callscript,
@@ -15,6 +14,7 @@ import {
 	type ToolCallContext,
 } from "callscript";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { type HighlightLang, toHtml, useHighlighter } from "@/lib/highlighter";
 import { CodeEditor } from "./editor";
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));

@@ -22,7 +22,6 @@ export async function Code({
 			<div className="group relative">
 				<div
 					className="overflow-x-auto px-4 py-3.5"
-					// biome-ignore lint/security/noDangerouslySetInnerHtml: build-time shiki output
 					dangerouslySetInnerHTML={{ __html: html }}
 				/>
 				<CopyButton text={code.trim()} />
@@ -43,7 +42,6 @@ export async function Code({
 			<div className="group relative">
 				<div
 					className="overflow-x-auto px-4 py-3.5"
-					// biome-ignore lint/security/noDangerouslySetInnerHtml: build-time shiki output
 					dangerouslySetInnerHTML={{ __html: html }}
 				/>
 				<CopyButton text={code.trim()} />
