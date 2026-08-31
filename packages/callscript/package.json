@@ -1,6 +1,6 @@
 {
 	"name": "callscript",
-	"version": "0.1.0",
+	"version": "0.1.1",
 	"type": "module",
 	"description": "a tool-calling script language for LLMs - the model authors ONE small script (plain JS, compiled to a validated, bounded, inert JSON plan - never executed) instead of calling tools one at a time. Adapter-based: mount AI SDK tools or plain { name, execute } literals",
 	"license": "Apache-2.0",
