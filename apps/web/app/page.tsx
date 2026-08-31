@@ -466,11 +466,12 @@ export default function Home() {
 							<Code
 								code={`
 {
-	"intent": "close stale issues",
+	"intent": "close stale issues and notify slack",
 	"steps": [
 		{ "id": "issues", "call": "github.listIssues", "args": { "repo": "api" } },
 		{ "id": "stale", "let": "issues.filter(i => i.stale)" },
-		{ "call": "github.closeIssue", "each": "stale.map(i => ({ number: i.number }))" }
+		{ "id": "closed", "call": "github.closeIssue", "each": "stale.map(i => ({ number: i.number }))" },
+		{ "call": "slack.post", "args": { "text": "=\`closed \${closed.length} stale issues\`" } }
 	]
 }
 `}

@@ -1,5 +1,6 @@
 "use client";
 
+import { type HighlightLang, toHtml, useHighlighter } from "@/lib/highlighter";
 import {
 	type AnyScriptTool,
 	callscript,
@@ -14,7 +15,6 @@ import {
 	type ToolCallContext,
 } from "callscript";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { type HighlightLang, toHtml, useHighlighter } from "@/lib/highlighter";
 import { CodeEditor } from "./editor";
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -286,7 +286,7 @@ export const escalate = tool(
   },
 );`;
 
-const PAYMENTS_JS = `// refund a return - the catch branch is dataflow, it runs only on failure
+const PAYMENTS_JS = `// refund a return
 const returns = await shop.listReturns({ days: 7 });
 try {
   const refund = await payments.refund({ orderId: returns[0].id });
