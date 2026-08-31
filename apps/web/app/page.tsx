@@ -447,20 +447,18 @@ export default function Home() {
 						<p className="mt-4 text-lg font-medium tracking-tight text-ink sm:text-xl">
 							Code Mode, without the sandbox.
 						</p>
-						<p className="mt-2 text-sm text-dim">
-							An experimental Vercel Labs project - APIs may change.
-						</p>
 						<p className="mt-4 max-w-[60ch] text-base leading-7 text-dim">
-							The model writes a subset of JavaScript; callscript turns it into
-							a{" "}
+							A tool-calling language for LLMs. The model writes a subset of
+							JavaScript - CallScript parses it into a{" "}
 							<a
 								href="#the-script"
 								className="text-ink underline underline-offset-4"
 							>
 								JSON plan
 							</a>{" "}
-							that can be analyzed, safely executed, serialized, paused, and
-							resumed - the benefits of code execution, without the complexity.
+							instead of executing it. Plans can be approved deterministically,
+							stored, and resumed later, and steps reference earlier results by
+							id.
 						</p>
 						<div className="mt-6">
 							<Code
