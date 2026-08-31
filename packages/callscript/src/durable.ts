@@ -12,8 +12,9 @@
  * same round. Exactly-once at the tool still needs idempotency keys -
  * dispatch carries `stepId`/`itemIndex`, and the host adds the run id.
  */
-import { sha256Hex } from "./hash";
+
 import { executeScript, stableStringify } from "./execute";
+import { sha256Hex } from "./hash";
 import type {
 	ExecuteHandlers,
 	ExecuteResult,

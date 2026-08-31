@@ -151,8 +151,6 @@ function asRecord(v: unknown): Record<string, unknown> {
 	return v as Record<string, unknown>;
 }
 
-type MethodTable = Record<string, (self: never, args: unknown[]) => unknown>;
-
 // Full callback fidelity: (element, index, array) - models write standard
 // idioms like `filter((x, i, a) => a.indexOf(x) === i)` and they must work.
 const ARRAY_METHODS: Record<

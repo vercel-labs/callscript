@@ -22,6 +22,17 @@
 		"enabled": true
 	},
 	"files": {
-		"includes": ["**", "!**/dist", "!**/coverage", "!**/.cache"]
+		"includes": [
+			"**",
+			"!**/dist",
+			"!**/coverage",
+			"!**/.cache",
+			"!**/.next",
+			"!**/.turbo",
+			"!**/*.tsbuildinfo",
+			"!**/next-env.d.ts",
+			"!**/*.svg",
+			"!apps/web/app/globals.css"
+		]
 	}
 }

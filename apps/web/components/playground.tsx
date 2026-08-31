@@ -1145,10 +1145,7 @@ export function Playground() {
 			// a FRESH scope per run (every call dispatches) with prior
 			// runs injected read-only under their run ids - old data is
 			// referenced explicitly (`run1.closed`), never silently replayed
-			const res = await engine.run(
-				{ script, variables: sessionVarValues },
-				engine.scope(),
-			);
+			const res = await engine.run({ script, variables: sessionVarValues });
 			// the run returns a run id: its published step results ride
 			// under it for every later script in the session
 			const published = publishedVariables(res.state);

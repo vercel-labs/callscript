@@ -707,7 +707,7 @@ export function createRunner(options: RunnerOptions): ScriptRunner {
 		},
 		cancel: (runId) => {
 			const entry = entries.get(runId);
-			if (!entry || entry.status !== "pending") return false;
+			if (entry?.status !== "pending") return false;
 			entry.status = "cancelled";
 			entry.finishedAt = Date.now();
 			entry.announced = false;

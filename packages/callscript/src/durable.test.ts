@@ -13,7 +13,7 @@ const makeRunner = (storage = memoryStorage()) => {
 			call: async (request, ctx) => {
 				if (request.tool === "svc.echo") return request.args;
 				gateCalls++;
-				const answer = ctx.resolutions["gate"];
+				const answer = ctx.resolutions.gate;
 				if (answer === undefined) {
 					throw suspend({
 						key: "gate",
@@ -121,7 +121,7 @@ describe("durable runner", () => {
 						echoes++;
 						return request.args;
 					}
-					const answer = ctx.resolutions["gate"];
+					const answer = ctx.resolutions.gate;
 					if (answer === undefined) throw suspend({ key: "gate" });
 					return { approved: answer };
 				},

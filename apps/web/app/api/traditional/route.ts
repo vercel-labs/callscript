@@ -1,9 +1,4 @@
-import {
-	generateText,
-	jsonSchema,
-	type ModelMessage,
-	tool,
-} from "ai";
+import { generateText, jsonSchema, type ModelMessage, tool } from "ai";
 import type { IntrospectableTool } from "callscript";
 
 export const maxDuration = 60;

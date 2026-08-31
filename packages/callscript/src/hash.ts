@@ -30,7 +30,7 @@ export function sha256Hex(input: string): string {
 	const bitLen = bytes.length * 8;
 
 	// pad to 64-byte blocks: 0x80, zeros, 64-bit big-endian length
-	const padded = new Uint8Array(((bytes.length + 8) >> 6 << 6) + 64);
+	const padded = new Uint8Array((((bytes.length + 8) >> 6) << 6) + 64);
 	padded.set(bytes);
 	padded[bytes.length] = 0x80;
 	const dv = new DataView(padded.buffer);

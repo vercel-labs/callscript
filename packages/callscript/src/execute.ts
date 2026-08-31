@@ -419,7 +419,7 @@ export async function executeScript(
 	env.$errors = errorBranch;
 	const noteError = (id: string) => {
 		const state = record.steps[id];
-		if (!state || state.status !== "done") return;
+		if (state?.status !== "done") return;
 		if (state.error) errorBranch[id] = state.error;
 		else if (state.items?.some((item) => item?.error)) {
 			errorBranch[id] = state.items.map((item) => item?.error);

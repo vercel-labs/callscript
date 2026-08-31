@@ -5,6 +5,7 @@
  * gone; these tests pin the semantics that replaced it.
  */
 import { describe, expect, it } from "vitest";
+import { executeScript } from "./execute";
 import {
 	type CallRequest,
 	earlyReturn,
@@ -13,7 +14,6 @@ import {
 	ScriptValidationError,
 	validateScript,
 } from "./index";
-import { executeScript } from "./execute";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 

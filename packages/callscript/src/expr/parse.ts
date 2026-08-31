@@ -93,7 +93,7 @@ function fail(node: acorn.AnyNode, what?: string): never {
 	);
 }
 
-function validateProp(name: string, node: acorn.AnyNode): void {
+function validateProp(name: string, _node: acorn.AnyNode): void {
 	if (FORBIDDEN_PROPS.has(name)) {
 		throw new ExprError(`Access to "${name}" is not allowed`, "forbidden");
 	}

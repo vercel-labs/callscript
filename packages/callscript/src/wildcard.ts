@@ -15,7 +15,7 @@ export type WildcardMatch = {
  * containing "*" never matches (patterns are not themselves callable), and
  * the matched `op` is never empty. Longest prefix wins.
  */
-export function createWildcardMatcher(	
+export function createWildcardMatcher(
 	names: Iterable<string>,
 ): (call: string) => WildcardMatch | undefined {
 	const prefixes = [...names]

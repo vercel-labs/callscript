@@ -188,10 +188,9 @@ await generateText({
 			<>
 				<p>
 					In callscript, a tool is anything an executor can evaluate. Executors
-					come from adapters - the AI SDK, MCP, and others - and the
-					default executor evaluates a plain object:{" "}
-					<K>&#123; name, execute &#125;</K> plus an optional schema and
-					description:
+					come from adapters - the AI SDK, MCP, and others - and the default
+					executor evaluates a plain object: <K>&#123; name, execute &#125;</K>{" "}
+					plus an optional schema and description:
 				</p>
 				<Tabs
 					tabs={[

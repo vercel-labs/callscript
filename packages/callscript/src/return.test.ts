@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { executeScript } from "./execute";
 import {
 	type CallContext,
 	type CallRequest,
@@ -6,7 +7,6 @@ import {
 	type Script,
 	validateScript,
 } from "./index";
-import { executeScript } from "./execute";
 
 describe("script-declared return", () => {
 	it("gates on input and re-evaluates on re-execute", async () => {

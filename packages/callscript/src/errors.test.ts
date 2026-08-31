@@ -4,12 +4,12 @@
  * expressions consume it - UCAN's `await/error`, spelled with a step id.
  */
 import { describe, expect, it } from "vitest";
+import { executeScript } from "./execute";
 import {
 	type CallRequest,
 	ScriptValidationError,
 	validateScript,
 } from "./index";
-import { executeScript } from "./execute";
 
 const issuesOf = (fn: () => unknown): string => {
 	try {

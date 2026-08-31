@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { earlyReturn, callscript, suspend } from "./engine";
+import { callscript, earlyReturn, suspend } from "./engine";
 import { tool } from "./tool";
 import { ScriptValidationError } from "./validate";
 

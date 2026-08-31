@@ -1,11 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
+import { executeScript } from "./execute";
 import {
 	analyzeScript,
 	type CallRequest,
 	publishedVariables,
 	validateScript,
 } from "./index";
-import { executeScript } from "./execute";
 
 describe("session variables", () => {
 	it("binds variables in every expression, read-only", async () => {
