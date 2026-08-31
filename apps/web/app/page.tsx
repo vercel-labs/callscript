@@ -449,18 +449,24 @@ export default function Home() {
 						</p>
 						<p className="mt-4 max-w-[60ch] text-base leading-7 text-dim">
 							A tool-calling language for LLMs. The model writes a subset of
-							JavaScript - CallScript parses it into a{" "}
-							<a
-								href="#the-script"
-								className="text-ink underline underline-offset-4"
-							>
-								JSON plan
-							</a>{" "}
-							instead of executing it. Plans can be approved deterministically,
-							stored, and resumed later, and steps reference earlier results by
-							id.
+							JavaScript - CallScript parses it into a JSON plan instead of
+							executing it. Plans can be approved deterministically, stored, and
+							resumed later, and steps reference earlier results by id.
 						</p>
 						<div className="mt-6">
+							<Code
+								code={`
+// close stale issues and notify slack
+const issues = await github.listIssues({ repo: "api" });
+const stale = issues.filter(i => i.stale);
+const closed = await Promise.all(
+  stale.map(i => github.closeIssue({ number: i.number })));
+await slack.post({ text: \`closed \${closed.length} stale issues\` });
+`}
+							/>
+						</div>
+						<p className="mt-4 text-sm text-faint">compiles to</p>
+						<div className="mt-2">
 							<Code
 								code={`
 {
