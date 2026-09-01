@@ -30,6 +30,10 @@
 		"./mcp": {
 			"types": "./dist/mcp.d.ts",
 			"default": "./dist/mcp.js"
+		},
+		"./mastra": {
+			"types": "./dist/mastra.d.ts",
+			"default": "./dist/mastra.js"
 		}
 	},
 	"files": [
@@ -45,14 +49,19 @@
 		"zod": "^4.4.3"
 	},
 	"peerDependencies": {
+		"@mastra/core": ">=1.0.0 <2.0.0",
 		"ai": ">=5"
 	},
 	"peerDependenciesMeta": {
+		"@mastra/core": {
+			"optional": true
+		},
 		"ai": {
 			"optional": true
 		}
 	},
 	"devDependencies": {
+		"@mastra/core": "^1.63.2",
 		"@types/node": "^24.0.0",
 		"ai": "^7.0.47",
 		"tsdown": "^0.22.14",
