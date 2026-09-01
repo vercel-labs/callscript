@@ -274,7 +274,7 @@ Mastra schemas are normalized through its Standard Schema helpers. Callscript va
 
 The adapter intentionally does not fabricate Mastra agent or workflow context. Direct calls do not add agent-only approval prompts, background task orchestration, or streaming hooks; use the Mastra Agent for those behaviors. The provider-free example is in packages/callscript/examples/mastra.ts.
 
-+## With plain tools
+## With plain tools
 
 ```ts
 import { callscript, tool } from "callscript";

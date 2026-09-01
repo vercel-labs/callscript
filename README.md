@@ -277,7 +277,7 @@ Mastra schemas are normalized through its Standard Schema helpers. Callscript va
 
 The adapter intentionally does not fabricate Mastra agent or workflow context. Direct calls do not add agent-only approval prompts, background task orchestration, or streaming hooks; use the Mastra Agent for those behaviors. The provider-free example is in packages/callscript/examples/mastra.ts.
 
-+## With MCP
+## With MCP
 
 `fromMCP(client)` mounts an MCP server's listed tools directly - names become registry names (a `namespace` prefixes them), descriptions and JSON Schemas render on the cards, and each call dispatches through `client.callTool`. Structural: anything with `listTools`/`callTool` fits (the official `@modelcontextprotocol/sdk` Client does), so the adapter adds no dependency.
 
