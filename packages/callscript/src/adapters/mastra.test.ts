@@ -1,3 +1,4 @@
+import { Agent } from "@mastra/core/agent";
 import { createTool, Tool } from "@mastra/core/tools";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
@@ -162,6 +163,20 @@ describe("toMastraTools", () => {
 		expect(executeTool.inputSchema).toMatchObject({
 			"~standard": expect.anything(),
 		});
+
+		const agent = new Agent({
+			id: "callscript-agent",
+			name: "callscript-agent",
+			model: "openai/gpt-5",
+			instructions: "Use the callscript tools.",
+			tools: mounted,
+		});
+		expect(agent).toBeInstanceOf(Agent);
+		expect(Object.keys(await agent.listTools())).toEqual([
+			"execute",
+			"search",
+			"describe",
+		]);
 
 		const result = await executeTool.execute?.(
 			{ script: "const result = await ping({}); return result;" },

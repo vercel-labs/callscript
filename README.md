@@ -12,7 +12,7 @@
 npm install callscript
 ```
 
-Two small runtime dependencies (`acorn`, `zod`), no sandbox, no service: the engine is a library that runs wherever your JS runs. The adapter peers (`ai` and `${@mastra/core`) are optional and only needed by their own entrypoints. For Mastra, install `${@mastra/core` alongside callscript.
+Two small runtime dependencies (`acorn`, `zod`), no sandbox, no service: the engine is a library that runs wherever your JS runs. The adapter peers (`ai` and `@mastra/core`) are optional and only needed by their own entrypoints. For Mastra, install `@mastra/core` alongside callscript.
 
 ## Quick start
 
@@ -135,7 +135,7 @@ The engine is **adapter-based**. It never knows where a tool came from; everythi
 { name, description?, inputSchema?, outputSchema?, errors?, execute(args, ctx) }
 ```
 
-so you can use callscript purely with the AI SDK, with plain object literals, or any mix:
+so you can use callscript purely with the AI SDK, Mastra, plain object literals, or any mix:
 
 - **`callscript/ai-sdk`**: hand it the same `tools` record you'd give `generateText`/`streamText`
 - **`callscript/mastra`**: mount a Mastra `createTool` record or expose callscript's engine tools to a Mastra Agent
