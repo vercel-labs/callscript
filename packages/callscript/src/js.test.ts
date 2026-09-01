@@ -304,6 +304,187 @@ describe("statement forms", () => {
 	});
 });
 
+describe("destructuring", () => {
+	// the dominant model spelling for "read fields off a result": every
+	// pattern desugars into the let steps the author could have written,
+	// so the plan format, validation, and reconciliation see nothing new
+
+	it("an object pattern on a call result reads fields off the minted call step", () => {
+		const script = parseJsScript(`
+			const { items, total } = await github.listIssues({ repo: "api" });
+			return { n: items.length, total };
+		`);
+		expect(script.steps).toEqual([
+			{ id: "s1", call: "github.listIssues", args: { repo: "api" } },
+			{ id: "items", let: "s1.items" },
+			{ id: "total", let: "s1.total" },
+		]);
+		expect(script.output).toBe("{ n: items.length, total }");
+	});
+
+	it("renames, defaults, nesting, string keys, and object rest", () => {
+		const script = parseJsScript(`
+			const res = await github.listIssues({ repo: "api" });
+			const { items: list = [], meta: { page = 1 }, "x-total": total, ...rest } = res;
+		`);
+		expect(script.steps.slice(1)).toEqual([
+			{ id: "list", let: "res.items === undefined ? ([]) : res.items" },
+			{ id: "page", let: "res.meta.page === undefined ? (1) : res.meta.page" },
+			{ id: "total", let: 'res["x-total"]' },
+			{
+				id: "rest",
+				let: 'Object.fromEntries(Object.entries(res).filter(e => e[0] !== "items" && e[0] !== "meta" && e[0] !== "x-total"))',
+			},
+		]);
+	});
+
+	it("array patterns: index reads, holes skip, rest slices", () => {
+		const script = parseJsScript(`
+			const issues = await github.listIssues({ repo: "api" });
+			const [first, , third, ...others] = issues;
+		`);
+		expect(script.steps.slice(1)).toEqual([
+			{ id: "first", let: "issues[0]" },
+			{ id: "third", let: "issues[2]" },
+			{ id: "others", let: "issues.slice(3)" },
+		]);
+	});
+
+	it("a nested pattern under a default reads from one minted id", () => {
+		const script = parseJsScript(`
+			const res = await github.listIssues({ repo: "api" });
+			const { meta: { page } = { page: 0 } } = res;
+		`);
+		expect(script.steps.slice(1)).toEqual([
+			{ id: "s1", let: "res.meta === undefined ? ({ page: 0 }) : res.meta" },
+			{ id: "page", let: "s1.page" },
+		]);
+	});
+
+	it("a path source is read directly; anything else is derived once", () => {
+		const script = parseJsScript(`
+			const res = await github.listIssues({ repo: "api" });
+			const { total } = res.meta;
+			const { length } = res.items.filter(i => i.stale);
+		`);
+		expect(script.steps.slice(1)).toEqual([
+			{ id: "total", let: "res.meta.total" },
+			{ id: "s1", let: "res.items.filter(i => i.stale)" },
+			{ id: "length", let: "s1.length" },
+		]);
+	});
+
+	it("inside try, the fields exist only when the call succeeded", () => {
+		const script = parseJsScript(`
+			try {
+				const { closed } = await github.closeIssue({ number: 7 });
+				const msg = \`closed \${closed}\`;
+			} catch (e) {
+				await slack.post({ text: e.message });
+			}
+		`);
+		const [call, closed, msg, failed] = script.steps as [
+			CallStep,
+			LetStep,
+			LetStep,
+			CallStep,
+		];
+		expect(call).toEqual({
+			id: "s1",
+			call: "github.closeIssue",
+			args: { number: 7 },
+			onError: "skip",
+		});
+		expect(closed).toEqual({
+			id: "closed",
+			let: "s1.closed",
+			if: "!($errors.s1)",
+		});
+		expect(msg).toEqual({
+			id: "msg",
+			let: "`closed ${closed}`",
+			if: "!($errors.s1)",
+		});
+		expect(failed.if).toBe("$errors.s1");
+		expect(failed.args).toEqual({ text: "=$errors.s1.message" });
+	});
+
+	it("a nested pattern in a Promise.all tuple reads off its own call", () => {
+		const script = parseJsScript(`
+			const [{ closed }, posted] = await Promise.all([
+				github.closeIssue({ number: 7 }),
+				slack.post({ text: "hi" }),
+			]);
+		`);
+		expect(script.steps).toEqual([
+			{ id: "s1", call: "github.closeIssue", args: { number: 7 } },
+			{ id: "posted", call: "slack.post", args: { text: "hi" } },
+			{ id: "closed", let: "s1.closed" },
+		]);
+	});
+
+	it("minted ids never collide with names bound deep in a pattern", () => {
+		const script = parseJsScript(`
+			const { a: { s1 } } = await github.getThing({});
+		`);
+		expect(script.steps.map((s) => s.id)).toEqual(["s2", "s1"]);
+	});
+
+	it("runs end to end through the engine", async () => {
+		const listIssues = tool({
+			name: "github.listIssues",
+			execute: () => ({
+				items: [{ number: 1 }, { number: 2 }, { number: 3 }],
+				meta: { total: 3 },
+			}),
+		});
+		const engine = callscript({ tools: [listIssues] });
+		const result = await engine.run({
+			script: `
+				const { items, meta: { total, page = 1 }, missing = "none" } = await github.listIssues({});
+				const [head, ...tail] = items;
+				return { head, tail: tail.length, total, page, missing };
+			`,
+		});
+		expect(result.status).toBe("ok");
+		if (result.status === "ok") {
+			expect(result.output).toEqual({
+				head: { number: 1 },
+				tail: 2,
+				total: 3,
+				page: 1,
+				missing: "none",
+			});
+		}
+	});
+
+	it("computed keys, forbidden keys, and destructured detached calls stay rejected", () => {
+		expect(
+			issuesOf(() =>
+				parseJsScript(`
+					const res = await github.listIssues({});
+					const { [key]: v } = res;
+				`),
+			)[0],
+		).toMatch(/computed key/);
+		expect(
+			issuesOf(() =>
+				parseJsScript(`
+					const res = await github.listIssues({});
+					const { constructor } = res;
+				`),
+			)[0],
+		).toMatch(/constructor/);
+		expect(
+			issuesOf(() =>
+				parseJsScript(`const { id } = svc.export({});`, {
+					tools: ["svc.export"],
+				}),
+			)[0],
+		).toMatch(/detached call to one name/);
+	});
+});
+
 describe("effect ordering", () => {
 	it("sequential awaited calls chain via after; data edges suppress it", () => {
 		const script = parseJsScript(`

@@ -234,6 +234,119 @@ export function parseJsScript(
 		return out;
 	};
 
+	/* ----------------------------- destructuring --------------------------- */
+
+	/** `src.key`, or `src["odd key"]` when the key is not an identifier. */
+	const memberSrc = (src: string, key: string): string =>
+		/^[A-Za-z_$][\w$]*$/.test(key)
+			? `${src}.${key}`
+			: `${src}[${JSON.stringify(key)}]`;
+
+	/** A pattern property's static key; undefined when computed. */
+	const propertyKey = (prop: acorn.AssignmentProperty): string | undefined => {
+		if (prop.computed) return undefined;
+		if (prop.key.type === "Identifier") return prop.key.name;
+		if (
+			prop.key.type === "Literal" &&
+			(typeof prop.key.value === "string" || typeof prop.key.value === "number")
+		) {
+			return String(prop.key.value);
+		}
+		return undefined;
+	};
+
+	/** A derivation the desugar generated: grammar-checked (a forbidden
+	 * key like `constructor` surfaces here, at the pattern's line). */
+	const pushLet = (
+		node: acorn.AnyNode,
+		id: string,
+		text: string,
+		ctx: Ctx,
+	): void => {
+		try {
+			parseExpr(text);
+		} catch (err) {
+			issue(node, err instanceof ExprError ? err.message : String(err));
+			return;
+		}
+		pushStep({ id, let: text }, ctx);
+	};
+
+	/**
+	 * DESTRUCTURING: `const { items, total = 0 } = x` and `const [head,
+	 * ...tail] = xs` desugar into one `let` step per bound name - a field
+	 * read off the source (`items = x.items`), which is exactly the
+	 * "bind to one name and read fields off it" spelling the plan already
+	 * has. `src` is always a cheap path off a step id, so a default may
+	 * repeat it (`x.total === undefined ? 0 : x.total`); a nested pattern
+	 * under a default reads from one minted id instead. Object rest keeps
+	 * every key the pattern did not name. Nothing here changes the plan
+	 * format: the steps are the ones the author could have written.
+	 */
+	const bindPattern = (pattern: acorn.Pattern, src: string, ctx: Ctx): void => {
+		switch (pattern.type) {
+			case "Identifier":
+				pushLet(pattern, pattern.name, src, ctx);
+				return;
+			case "AssignmentPattern": {
+				const fallback = exprSrc(pattern.right as acorn.AnyNode, ctx);
+				if (fallback === undefined) return;
+				const value = `${src} === undefined ? (${fallback}) : ${src}`;
+				if (pattern.left.type === "Identifier") {
+					pushLet(pattern, pattern.left.name, value, ctx);
+					return;
+				}
+				const id = mint();
+				pushLet(pattern, id, value, ctx);
+				bindPattern(pattern.left, id, ctx);
+				return;
+			}
+			case "ObjectPattern": {
+				const named: string[] = [];
+				for (const prop of pattern.properties) {
+					if (prop.type === "RestElement") {
+						const keep =
+							named.length === 0
+								? "true"
+								: named
+										.map((k) => `e[0] !== ${JSON.stringify(k)}`)
+										.join(" && ");
+						bindPattern(
+							prop.argument,
+							`Object.fromEntries(Object.entries(${src}).filter(e => ${keep}))`,
+							ctx,
+						);
+						continue;
+					}
+					const key = propertyKey(prop);
+					if (key === undefined) {
+						issue(
+							prop,
+							"destructure with plain keys - a computed key ([k]) is not a static binding",
+						);
+						continue;
+					}
+					named.push(key);
+					bindPattern(prop.value as acorn.Pattern, memberSrc(src, key), ctx);
+				}
+				return;
+			}
+			case "ArrayPattern": {
+				pattern.elements.forEach((el, index) => {
+					if (el === null) return; // a hole skips the element
+					if (el.type === "RestElement") {
+						bindPattern(el.argument, `${src}.slice(${index})`, ctx);
+						return;
+					}
+					bindPattern(el, `${src}[${index}]`, ctx);
+				});
+				return;
+			}
+			default:
+				issue(pattern, `unsupported binding pattern (${pattern.type})`);
+		}
+	};
+
 	/* ----------------------------- args & opts ----------------------------- */
 
 	/** A node that is pure JSON - embeddable as literal args. */
@@ -686,34 +799,25 @@ export function parseJsScript(
 						"one tool call per try - give each risky call its own try/catch",
 					);
 				}
-				const names: (string | undefined)[] =
-					binding === undefined
-						? inner.elements.map(() => undefined)
-						: binding.type === "ArrayPattern"
-							? binding.elements.map((el) =>
-									el === null
-										? undefined
-										: el.type === "Identifier"
-											? el.name
-											: undefined,
-								)
-							: [];
-				if (binding !== undefined && binding.type === "ArrayPattern") {
-					if (binding.elements.length !== inner.elements.length) {
-						return issue(
-							binding,
-							"destructure one name per call: const [a, b] = await Promise.all([...])",
-						);
-					}
-					if (
-						binding.elements.some(
-							(el) => el !== null && el.type !== "Identifier",
-						)
-					) {
-						return issue(binding, "plain names only in the destructuring");
-					}
+				// `const [a, b] = ...` names the calls; a nested pattern in an
+				// element (`[{ closed }, b]`) reads off its own minted call.
+				const elements =
+					binding?.type === "ArrayPattern" ? binding.elements : undefined;
+				if (
+					elements !== undefined &&
+					elements.length !== inner.elements.length
+				) {
+					return issue(
+						binding!,
+						"destructure one name per call: const [a, b] = await Promise.all([...])",
+					);
 				}
+				const names: (string | undefined)[] = inner.elements.map((_, i) => {
+					const el = elements?.[i];
+					return el && el.type === "Identifier" ? el.name : undefined;
+				});
 				const compiled: CallStep[] = [];
+				const byIndex: (CallStep | undefined)[] = [];
 				for (const [index, el] of inner.elements.entries()) {
 					if (!el || el.type === "SpreadElement") {
 						issue(inner, "Promise.all takes plain tool calls, no holes/spread");
@@ -729,6 +833,7 @@ export function parseJsScript(
 						continue;
 					}
 					const step = compileCall(callNode, names[index] ?? mint(), ctx);
+					byIndex[index] = step;
 					if (step !== undefined) compiled.push(step);
 				}
 				// All elements chain after the SAME prior frontier, then the
@@ -742,15 +847,33 @@ export function parseJsScript(
 					if (step.await !== false) nextFrontier.push(step.id);
 				}
 				frontier = nextFrontier.length > 0 ? nextFrontier : before;
-				// An Identifier binding gets the tuple as a value.
-				if (binding !== undefined && binding.type === "Identifier") {
-					pushStep(
-						{
-							id: binding.name,
-							let: `[${compiled.map((s) => s.id).join(", ")}]`,
-						},
-						ctx,
-					);
+				if (elements !== undefined) {
+					// Nested patterns in the tuple read off their own call step.
+					elements.forEach((el, index) => {
+						const step = byIndex[index];
+						if (el === null || el.type === "Identifier" || step === undefined) {
+							return;
+						}
+						if (el.type === "RestElement") {
+							issue(
+								el,
+								"destructure one name per call: const [a, b] = await Promise.all([...])",
+							);
+							return;
+						}
+						bindPattern(el, step.id, ctx);
+					});
+				} else if (binding !== undefined) {
+					// Any other binding gets the tuple as a value - a name
+					// directly, a pattern through a minted tuple step.
+					const tuple = `[${compiled.map((s) => s.id).join(", ")}]`;
+					if (binding.type === "Identifier") {
+						pushStep({ id: binding.name, let: tuple }, ctx);
+					} else {
+						const id = mint();
+						pushStep({ id, let: tuple }, ctx);
+						bindPattern(binding, id, ctx);
+					}
 				}
 				return undefined;
 			}
@@ -760,16 +883,23 @@ export function parseJsScript(
 			);
 		}
 
-		// Plain awaited tool call.
-		if (binding !== undefined && bindingName === undefined) {
-			return issue(
-				binding,
-				"destructuring a call result is not supported - bind it to one name and read fields off it",
-			);
-		}
+		// Plain awaited tool call. A destructured binding reads its fields
+		// off the call step: `const { items } = await t()` is the call under
+		// a minted id plus `items = <id>.items` - inside a try, only when
+		// the call succeeded (the catch branch owns the failure).
 		const step = compileCall(arg, bindingName ?? mint(), ctx);
 		if (step === undefined) return undefined;
-		return pushCall(step, ctx);
+		pushCall(step, ctx);
+		if (binding !== undefined && bindingName === undefined) {
+			bindPattern(
+				binding,
+				step.id,
+				where === "try"
+					? { ...ctx, cond: composeCond(ctx.cond, `!($errors.${step.id})`) }
+					: ctx,
+			);
+		}
+		return step;
 	};
 
 	/* ------------------------------ statements ----------------------------- */
@@ -784,17 +914,17 @@ export function parseJsScript(
 				compileAwaited(decl.init, decl.id, ctx, "statement");
 				continue;
 			}
-			if (decl.id.type !== "Identifier") {
-				issue(
-					decl.id,
-					"bind derived values to one name - destructure by deriving fields in later consts",
-				);
-				continue;
-			}
 			// Un-awaited call to a MOUNTED tool -> detached (fire-and-forget).
 			if (decl.init.type === "CallExpression") {
 				const name = dottedName(decl.init.callee);
 				if (name !== undefined && isMountedTool(name)) {
+					if (decl.id.type !== "Identifier") {
+						issue(
+							decl.id,
+							"bind a detached call to one name - const job = tool.name({ ... }); a later script joins it with await job",
+						);
+						continue;
+					}
 					const step = compileCall(decl.init, decl.id.name, ctx);
 					if (step !== undefined) {
 						step.await = false;
@@ -805,6 +935,17 @@ export function parseJsScript(
 			}
 			const text = exprSrc(decl.init, ctx);
 			if (text === undefined) continue;
+			if (decl.id.type !== "Identifier") {
+				// Destructuring a pure value: read the fields straight off a
+				// name/path source; anything else is derived once first.
+				let src = text;
+				if (dottedName(decl.init) === undefined) {
+					src = mint();
+					pushStep({ id: src, let: text }, ctx);
+				}
+				bindPattern(decl.id, src, ctx);
+				continue;
+			}
 			pushStep({ id: decl.id.name, let: text }, ctx);
 		}
 	};
