@@ -68,7 +68,7 @@ const closed = await Promise.all(
 return { count: closed.length };
 ```
 
-This is **parsed, never executed**: each statement compiles into a step of the same inert plan - `const x = await tool(...)` is a call step, `const x = expr` a pure derivation, `if (cond) return v` a guard, `Promise.all(list.map(...))` a bounded fan-out (the visible `slice` is the bound), `try/catch` the error branch (`e` compiles to `$errors.<id>`), and the trailing `return` the output projection. What is stored, hashed, validated, approved, and resumed is always the JSON plan; the JS text is a frontend, not a runtime.
+This is **parsed, never executed**: each statement compiles into a step of the same inert plan - `const x = await tool(...)` is a call step, `const x = expr` a pure derivation, `const { items, total = 0 } = x` one derivation per bound name (`items = x.items`; array patterns, defaults, nesting, and rest all desugar the same way), `if (cond) return v` a guard, `Promise.all(list.map(...))` a bounded fan-out (the visible `slice` is the bound), `try/catch` the error branch (`e` compiles to `$errors.<id>`), and the trailing `return` the output projection. What is stored, hashed, validated, approved, and resumed is always the JSON plan; the JS text is a frontend, not a runtime.
 
 Semantics match the JS reading: **awaited calls run in statement order** (the compiler inserts `after` edges where no data already orders them), and `Promise.all` - the spelling the model already knows for concurrency - runs calls in parallel. A call's second argument carries per-step options: `github.closeIssue(args, { reason: "why", suspend: true, onError: "skip" })`. An un-awaited call to a mounted tool detaches (fire-and-forget) and a later script joins it with `const r = await job`.
 

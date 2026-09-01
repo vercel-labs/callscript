@@ -238,15 +238,17 @@ export function patternNames(pattern: acorn.Pattern): string[] {
 		case "Identifier":
 			return [pattern.name];
 		case "ArrayPattern":
-			return pattern.elements.flatMap((el) =>
-				el && el.type === "Identifier" ? [el.name] : [],
-			);
+			return pattern.elements.flatMap((el) => (el ? patternNames(el) : []));
 		case "ObjectPattern":
 			return pattern.properties.flatMap((prop) =>
-				prop.type === "Property" && prop.value.type === "Identifier"
-					? [prop.value.name]
-					: [],
+				prop.type === "Property"
+					? patternNames(prop.value as acorn.Pattern)
+					: patternNames(prop.argument),
 			);
+		case "AssignmentPattern":
+			return patternNames(pattern.left);
+		case "RestElement":
+			return patternNames(pattern.argument);
 		default:
 			return [];
 	}
