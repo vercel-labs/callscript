@@ -153,7 +153,16 @@ export const fromMastraTools = <
 			execute: async (args: unknown, _ctx: ToolCallContext) => {
 				let resolved = args;
 				if (input !== undefined) {
-					const checked = await input.standard["~standard"].validate(args);
+					let inputArgs = args;
+					if (inputArgs === undefined || inputArgs === null) {
+						const inputType = (input.json as { type?: unknown }).type;
+						if (inputType === "object") {
+							inputArgs = {};
+						} else if (inputType === "array") {
+							inputArgs = [];
+						}
+					}
+					const checked = await input.standard["~standard"].validate(inputArgs);
 					if (!("value" in checked)) {
 						throw invalidArgs(
 							name,

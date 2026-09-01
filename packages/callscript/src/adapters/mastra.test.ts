@@ -96,6 +96,26 @@ describe("fromMastraTools", () => {
 		expect(calls).toBe(0);
 	});
 
+	it("keeps Mastra's omitted-input behavior for optional object schemas", async () => {
+		const source = createTool({
+			id: "source-optional",
+			description: "optional input",
+			inputSchema: z.object({ value: z.string().optional() }),
+			execute: async ({ value }) => value ?? "default",
+		});
+		const engine = callscript({
+			tools: fromMastraTools({ optional: source }),
+		});
+		const result = await engine.run({
+			script: { steps: [{ call: "optional" }] },
+		});
+
+		expect(result.status).toBe("ok");
+		if (result.status === "ok") {
+			expect(result.output).toBe("default");
+		}
+	});
+
 	it("maps Mastra output validation results to mastra_validation_error", async () => {
 		const source = createTool({
 			id: "source-broken",
