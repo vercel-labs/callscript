@@ -12,7 +12,7 @@
 npm install callscript
 ```
 
-Two small runtime dependencies (`acorn`, `zod`), no sandbox, no service: the engine is a library that runs wherever your JS runs. The adapter's peer (`ai`) is optional and only needed by its own entrypoint.
+Two small runtime dependencies (`acorn`, `zod`), no sandbox, no service: the engine is a library that runs wherever your JS runs. The adapter peers (`ai` and `@mastra/core`) are optional and only needed by their own entrypoints. For Mastra, install `@mastra/core` alongside callscript.
 
 ## Quick start
 
@@ -133,9 +133,10 @@ The engine is **adapter-based**. It never knows where a tool came from; everythi
 { name, description?, inputSchema?, outputSchema?, errors?, execute(args, ctx) }
 ```
 
-so you can use callscript purely with the AI SDK, with plain object literals, or any mix:
+so you can use callscript purely with the AI SDK, Mastra, plain object literals, or any mix:
 
 - **`callscript/ai-sdk`**: hand it the same `tools` record you'd give `generateText`/`streamText`
+- **`callscript/mastra`**: mount a Mastra `createTool` record or expose callscript's engine tools to a Mastra Agent
 - **plain literals**: a `{ name, execute }` object is already a tool; the `tool()` helper pins the literals for typed authoring
 
 ## With the AI SDK
@@ -205,6 +206,73 @@ which is stored and executed as:
 ```
 
 The record keys are the registry: a script's `call` names a tool by key, and `validate` rejects anything else before a run starts. A `namespace` prefixes the keys, so whole records mount side by side by spreading: `tools: [...fromAISDKTools(github, { namespace: "github" }), ...fromAISDKTools(slack, { namespace: "slack" })]`. Args validate against each tool's schema (zod, any standard schema, or `jsonSchema()`) **before** `execute` fires; a failure fails the step with code `invalid_tool_args`. The schemas also render the tool cards `engine.describe()` / `engine.toolDefinition()` put in the model's prompt.
+
+## With Mastra
+
+Mastra in, Mastra out: use Mastra's native createTool definitions with fromMastraTools, or expose callscript's execute/search/describe trio as native Mastra Tool instances with toMastraTools. Install the optional peer with:
+
+~~~sh
+npm install callscript @mastra/core
+~~~
+
+A Mastra record's keys are the names callscript mounts and dispatches. The Mastra id remains the source identity, so a tool with id weather-source mounted from the record key weather is called as weather. Use namespace to prefix a whole record, and key overrides by the original record key:
+
+~~~ts
+import { Agent } from "@mastra/core/agent";
+import { createTool } from "@mastra/core/tools";
+import { z } from "zod";
+import { callscript } from "callscript";
+import { fromMastraTools, toMastraTools } from "callscript/mastra";
+
+const weather = createTool({
+	id: "weather-source",
+	description: "look up a city's weather",
+	inputSchema: z.object({ city: z.string() }),
+	outputSchema: z.object({ city: z.string() }),
+	execute: async ({ city }) => ({ city }),
+});
+
+const engine = callscript({
+	tools: fromMastraTools({ weather }),
+});
+
+const weatherTools = fromMastraTools(
+	{ lookup: weather },
+	{
+		namespace: "weather",
+		overrides: {
+			lookup: {
+				description: "look up weather for one city",
+				errors: ["unavailable"],
+			},
+		},
+	},
+);
+~~~
+
+The reverse direction returns native Mastra Tool instances, ready for a Mastra Agent:
+
+~~~ts
+const mastraTools = toMastraTools(engine, {
+	names: {
+		execute: "runScript",
+		search: "findTools",
+		describe: "describeTools",
+	},
+});
+
+const agent = new Agent({
+	id: "callscript-agent",
+	name: "callscript-agent",
+	model: "openai/gpt-5",
+	instructions: "Use the callscript tools.",
+	tools: mastraTools,
+});
+~~~
+
+Mastra schemas are normalized through its Standard Schema helpers. Callscript validates imported arguments before the Mastra execute function runs; invalid input fails with code invalid_tool_args. A Mastra validation result returned by a tool is surfaced as mastra_validation_error. Directly mounted tools must have execute, so client-only definitions are rejected at mount time.
+
+The adapter intentionally does not fabricate Mastra agent or workflow context. Direct calls do not add agent-only approval prompts, background task orchestration, or streaming hooks; use the Mastra Agent for those behaviors. The provider-free example is in packages/callscript/examples/mastra.ts.
 
 ## With plain tools
 
@@ -312,6 +380,7 @@ Runnable tours, no build step:
 ```
 bun examples/t.ts       # describe/toolDefinition/context - the three prompt layers
 bun test/ai-sdk.ts      # end to end with the AI SDK: model authors, engine validates + runs
+bun examples/mastra.ts  # native Mastra tools in and callscript tools out
 ```
 
 ## License
