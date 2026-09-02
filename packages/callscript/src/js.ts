@@ -1263,6 +1263,27 @@ export function parseJsScript(
 							}
 							continue;
 						}
+						// The two bare calls models write most: name the callscript
+						// spelling for each, not just the rule.
+						if (
+							expr.callee.type === "MemberExpression" &&
+							!expr.callee.computed &&
+							expr.callee.property.type === "Identifier" &&
+							expr.callee.property.name === "forEach"
+						) {
+							issue(
+								stmt,
+								"forEach cannot fan out - spell it: await Promise.all(list.map(item => tool.name({ ... })))",
+							);
+							continue;
+						}
+						if (name !== undefined && name.startsWith("console.")) {
+							issue(
+								stmt,
+								`${name} has nowhere to print - return the value instead (return { ... }); every step's output is already recorded`,
+							);
+							continue;
+						}
 						issue(
 							stmt,
 							name !== undefined

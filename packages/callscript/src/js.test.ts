@@ -549,6 +549,28 @@ describe("teaching rejections", () => {
 		expect(msg).toContain("Promise.all");
 	});
 
+	it("forEach names the Promise.all fan-out", () => {
+		const issues = issuesOf(() =>
+			parseJsScript(`
+				const issues = await github.listIssues({ repo: "api" });
+				issues.forEach(i => github.closeIssue({ number: i.number }));
+			`),
+		);
+		expect(issues[0]).toMatch(
+			/forEach cannot fan out.*Promise\.all\(list\.map/,
+		);
+	});
+
+	it("console.log names the return-the-value fix", () => {
+		const issues = issuesOf(() =>
+			parseJsScript(`
+				const issues = await github.listIssues({ repo: "api" });
+				console.log(issues);
+			`),
+		);
+		expect(issues[0]).toMatch(/console\.log has nowhere to print.*return/);
+	});
+
 	it("reassignment names single-assignment", () => {
 		const issues = issuesOf(() => parseJsScript(`const a = 1;\na = 2;`));
 		expect(issues.join("\n")).toContain("single-assignment");
