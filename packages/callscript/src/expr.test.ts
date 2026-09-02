@@ -143,6 +143,26 @@ describe("evalExpr", () => {
 		]);
 	});
 
+	it("supports `in` over own keys of data", () => {
+		expect(evalExpr('"tier" in user', env)).toBe(true);
+		expect(evalExpr('"email" in user', env)).toBe(false);
+		expect(evalExpr("0 in issues && 3 in issues === false", env)).toBe(true);
+		// data only - no prototype chain leaks through
+		expect(evalExpr('"map" in issues', env)).toBe(false);
+		expect(evalExpr('"toString" in user', env)).toBe(false);
+		// the check stays inside the guard
+		expect(
+			evalExpr('issues.filter(i => "labels" in i && i.labels.length > 1)', env),
+		).toHaveLength(1);
+	});
+
+	it("`in` rejects non-objects and forbidden names", () => {
+		expect(() => evalExpr('"a" in 42', {})).toThrow(/non-object/);
+		expect(() => evalExpr('"a" in null', {})).toThrow(/non-object/);
+		expect(() => evalExpr('"constructor" in user', env)).toThrow(/not allowed/);
+		expect(() => evalExpr('"__proto__" in user', env)).toThrow(/not allowed/);
+	});
+
 	it("bans `new` with a hint at the alternatives", () => {
 		expect(() => evalExpr("[...new Set(xs)]", { xs: [1] })).toThrow(
 			/Object\.groupBy|indexOf/,

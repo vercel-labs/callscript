@@ -53,6 +53,7 @@ const ALLOWED_BINARY = new Set([
 	"!=",
 	"===",
 	"!==",
+	"in",
 ]);
 
 const ALLOWED_LOGICAL = new Set(["&&", "||", "??"]);

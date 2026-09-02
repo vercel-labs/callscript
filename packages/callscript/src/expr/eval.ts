@@ -607,6 +607,22 @@ function binary(op: string, l: unknown, r: unknown): unknown {
 			return l === r;
 		case "!==":
 			return l !== r;
+		case "in": {
+			// Own keys of DATA only: scripts see plain values, never a
+			// prototype chain, so `"map" in []` is false here (and the
+			// forbidden names stay unreachable through this door too).
+			if (r === null || typeof r !== "object") {
+				throw new ExprError(
+					`Cannot use "in" on a non-object (${r === null ? "null" : typeof r})`,
+					"type",
+				);
+			}
+			const key = String(l);
+			if (FORBIDDEN_PROPS.has(key)) {
+				throw new ExprError(`Access to "${key}" is not allowed`, "forbidden");
+			}
+			return Object.hasOwn(r, key);
+		}
 		default:
 			throw new ExprError(`Unsupported operator ${op}`, "syntax");
 	}
