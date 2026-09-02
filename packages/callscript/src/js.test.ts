@@ -711,6 +711,107 @@ describe("await hoisting", () => {
 	});
 });
 
+describe("conditional assignment", () => {
+	// `let x = a; if (cond) x = b;` is one derivation - the same plan as
+	// `const x = cond ? b : a`, without the retry over reassignment
+
+	it("`let x = a; if (c) x = b` becomes a conditional let", () => {
+		const script = parseJsScript(`
+			const issues = await github.listIssues({ repo: "api" });
+			let label = "none";
+			if (issues.length > 0) label = "some";
+			return label;
+		`);
+		expect(script.steps[1]).toEqual({
+			id: "label",
+			let: '(issues.length > 0) ? ("some") : ("none")',
+		});
+		expect(script.output).toBe("label");
+	});
+
+	it("else branches, block bodies, and a dead initializer", () => {
+		const script = parseJsScript(`
+			const issues = await github.listIssues({ repo: "api" });
+			let tone;
+			if (issues.length > 5) { tone = "busy"; } else { tone = "calm"; }
+			let first = null;
+			if (issues.length > 0) first = issues[0];
+			await slack.post({ text: \`\${tone}: \${first?.title ?? "-"}\` });
+		`);
+		expect(script.steps.slice(1, 3)).toEqual([
+			{ id: "tone", let: '(issues.length > 5) ? ("busy") : ("calm")' },
+			{ id: "first", let: "(issues.length > 0) ? (issues[0]) : (null)" },
+		]);
+		expect((script.steps[3] as CallStep).after).toBeUndefined();
+	});
+
+	it("inherits the enclosing guard", () => {
+		const script = parseJsScript(`
+			const issues = await github.listIssues({ repo: "api" });
+			if (issues.length > 0) {
+				let n = 0;
+				if (issues[0].stale) n = 1;
+				await slack.post({ text: n });
+			}
+		`);
+		expect(script.steps[1]).toEqual({
+			id: "n",
+			let: "(issues[0].stale) ? (1) : (0)",
+			if: "issues.length > 0",
+		});
+	});
+
+	it("runs end to end through the engine", async () => {
+		const listIssues = tool({
+			name: "github.listIssues",
+			execute: () => [{ number: 1 }, { number: 2 }],
+		});
+		const engine = callscript({ tools: [listIssues] });
+		const result = await engine.run({
+			script: `
+				const issues = await github.listIssues({});
+				let label = "none";
+				if (issues.length > 1) label = "many";
+				let first;
+				if (issues.length > 0) first = issues[0].number; else first = -1;
+				return { label, first };
+			`,
+		});
+		expect(result.status).toBe("ok");
+		if (result.status === "ok") {
+			expect(result.output).toEqual({ label: "many", first: 1 });
+		}
+	});
+
+	it("stays narrow: else-if chains, awaits in a branch, and other work keep the reassignment message", () => {
+		const reassign = /single-assignment/;
+		expect(
+			issuesOf(() =>
+				parseJsScript(`
+					let label = "none";
+					if (a) label = "x"; else if (b) label = "y";
+				`),
+			).join("\n"),
+		).toMatch(reassign);
+		expect(
+			issuesOf(() =>
+				parseJsScript(`
+					let r = null;
+					if (a) r = await t.fetch({});
+				`),
+			).join("\n"),
+		).toMatch(reassign);
+		expect(
+			issuesOf(() =>
+				parseJsScript(`
+					let n = 0;
+					if (a) { n = 1; await t.ping({}); }
+				`),
+			).join("\n"),
+		).toMatch(reassign);
+	});
+});
+
 describe("effect ordering", () => {
 	it("sequential awaited calls chain via after; data edges suppress it", () => {
 		const script = parseJsScript(`

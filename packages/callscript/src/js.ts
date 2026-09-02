@@ -1336,6 +1336,71 @@ export function parseJsScript(
 	};
 
 	/**
+	 * The dominant model idiom for a conditional value:
+	 *
+	 *   let label = "none";                       // or  let label;
+	 *   if (issues.length > 0) label = "some";    // optionally: else label = "other";
+	 *
+	 * is one derivation, `label = cond ? "some" : "none"`, so desugar it
+	 * to that single-assignment let. Deliberately narrow: a non-const
+	 * binding with a pure (or missing) initializer, followed by an `if`
+	 * whose branches are exactly one assignment to that name each, and
+	 * no await anywhere in it - a call in a branch would hoist out
+	 * unconditionally, so it keeps the reassignment message instead.
+	 * Returns true when the pair was consumed.
+	 */
+	const ifAssignDesugar = (
+		decl: acorn.VariableDeclaration,
+		next: acorn.AnyNode | undefined,
+		ctx: Ctx,
+	): boolean => {
+		if (decl.kind === "const" || decl.declarations.length !== 1) return false;
+		const d = decl.declarations[0]!;
+		if (d.id.type !== "Identifier") return false;
+		const name = d.id.name;
+		if (next?.type !== "IfStatement" || containsAwait(next)) return false;
+		if (d.init != null && containsAwait(d.init)) return false;
+		/** The one `name = expr` a branch holds, else undefined. */
+		const assigned = (
+			branch: acorn.Statement,
+		): acorn.Expression | undefined => {
+			const stmt =
+				branch.type === "BlockStatement"
+					? branch.body.length === 1
+						? branch.body[0]
+						: undefined
+					: branch;
+			if (
+				stmt?.type !== "ExpressionStatement" ||
+				stmt.expression.type !== "AssignmentExpression" ||
+				stmt.expression.operator !== "=" ||
+				stmt.expression.left.type !== "Identifier" ||
+				stmt.expression.left.name !== name
+			) {
+				return undefined;
+			}
+			return stmt.expression.right;
+		};
+		const whenTrue = assigned(next.consequent);
+		if (whenTrue === undefined) return false;
+		const whenFalse =
+			next.alternate == null ? undefined : assigned(next.alternate);
+		if (next.alternate != null && whenFalse === undefined) return false;
+
+		const cond = exprSrc(next.test, ctx);
+		const a = exprSrc(whenTrue, ctx);
+		const b =
+			whenFalse !== undefined
+				? exprSrc(whenFalse, ctx)
+				: d.init != null
+					? exprSrc(d.init, ctx)
+					: "undefined";
+		if (cond === undefined || a === undefined || b === undefined) return true;
+		pushStep({ id: name, let: `(${cond}) ? (${a}) : (${b})` }, ctx);
+		return true;
+	};
+
+	/**
 	 * The dominant model idiom for a fallible call:
 	 *
 	 *   let r;            // or  let r = null / undefined
@@ -1414,6 +1479,10 @@ export function parseJsScript(
 					const desugared = tryAssignDesugar(stmt, stmts[index + 1]);
 					if (desugared !== undefined) {
 						compileTry(desugared, ctx);
+						index++;
+						continue;
+					}
+					if (ifAssignDesugar(stmt, stmts[index + 1], ctx)) {
 						index++;
 						continue;
 					}
