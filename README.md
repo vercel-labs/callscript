@@ -70,6 +70,14 @@ return { count: closed.length };
 
 This is **parsed, never executed**: each statement compiles into a step of the same inert plan - `const x = await tool(...)` is a call step, `const x = expr` a pure derivation, `const { items, total = 0 } = x` one derivation per bound name (`items = x.items`; array patterns, defaults, nesting, and rest all desugar the same way), `if (cond) return v` a guard, `Promise.all(list.map(...))` a bounded fan-out (the visible `slice` is the bound), `try/catch` the error branch (`e` compiles to `$errors.<id>`), and the trailing `return` the output projection. What is stored, hashed, validated, approved, and resumed is always the JSON plan; the JS text is a frontend, not a runtime.
 
+The frontend also desugars the spellings models reach for most, so they compile instead of costing a retry - every one of them into steps the author could have written by hand, never a new plan construct:
+
+- **Destructuring**: `const { items, total = 0 } = await repo.list({})` is the call plus one derivation per name (`items = s1.items`); `const [head, ...tail] = items` reads by index and `slice`. Renames, defaults, nesting, string keys, and object rest all work; inside `try/catch` the fields exist only when the call succeeded.
+- **Nested awaits**: `return { issues: await repo.list({}) }` or `close({ id: (await find({})).id })` hoists each awaited call into its own step, in source order, and the expression reads the step id. An await inside an arrow or a fan-out's own arguments stays rejected with the fix.
+- **Loop bodies**: `for (const i of list) { const n = i.number; if (!i.stale) continue; await close({ n }) }` is one fan-out - the guards become a `.filter` on the list and the locals inline into the call. Two calls, an `else`, or a `return` is a real loop and is rejected with the `Promise.all(list.map(...))` spelling.
+- **Conditional values**: `let label = "none"; if (issues.length) label = "some"` is the single derivation `label = cond ? "some" : "none"`.
+- **`in`**: `"labels" in issue` checks the object's own keys - plain data only, never a prototype chain.
+
 Semantics match the JS reading: **awaited calls run in statement order** (the compiler inserts `after` edges where no data already orders them), and `Promise.all` - the spelling the model already knows for concurrency - runs calls in parallel. A call's second argument carries per-step options: `github.closeIssue(args, { reason: "why", suspend: true, onError: "skip" })`. An un-awaited call to a mounted tool detaches (fire-and-forget) and a later script joins it with `const r = await job`.
 
 Everything outside the recognized grammar is rejected before anything runs, with the message that names the callscript spelling - `while` points at the bounded fan-out, reassignment at single-assignment consts, `new Set` at the dedupe idiom - so one retry converges:
