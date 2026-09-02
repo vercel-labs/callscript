@@ -485,6 +485,121 @@ describe("destructuring", () => {
 	});
 });
 
+describe("for..of bodies", () => {
+	// a for..of IS Promise.all(list.map(...)), so its body may carry what
+	// a map arrow can express - and nothing more
+
+	it("an if guard around the call filters the list", () => {
+		const script = parseJsScript(`
+			const issues = await github.listIssues({ repo: "api" });
+			for (const i of issues.slice(0, 10)) {
+				if (i.stale) await github.closeIssue({ number: i.number });
+			}
+		`);
+		expect(script.steps[1]).toEqual({
+			id: "s1",
+			call: "github.closeIssue",
+			each: "(issues.slice(0, 10)).filter((i) => (i.stale)).map((i) => ({ number: i.number }))",
+			max: 10,
+		});
+	});
+
+	it("`if (cond) continue` skips items; local consts inline into the call", () => {
+		const script = parseJsScript(`
+			const issues = await github.listIssues({ repo: "api" });
+			for (const i of issues) {
+				const n = i.number;
+				const doubled = n * 2;
+				if (!i.stale) continue;
+				await github.closeIssue({ number: doubled, tag: \`#\${n}\` });
+			}
+		`);
+		expect((script.steps[1] as CallStep).each).toBe(
+			"(issues).filter((i) => (!(!i.stale))).map((i) => ({ number: ((i.number) * 2), tag: `#${(i.number)}` }))",
+		);
+	});
+
+	it("a guarded block may hold locals before its call; a bound call is fine", () => {
+		const script = parseJsScript(`
+			const issues = await github.listIssues({ repo: "api" });
+			for (const i of issues) {
+				if (i.stale) {
+					const label = \`#\${i.number}\`;
+					const r = await slack.post({ text: label });
+				}
+			}
+		`);
+		expect((script.steps[1] as CallStep).each).toBe(
+			"(issues).filter((i) => (i.stale)).map((i) => ({ text: (`#${i.number}`) }))",
+		);
+	});
+
+	it("runs end to end: only the guarded items dispatch, locals resolve", async () => {
+		const closed: number[] = [];
+		const listIssues = tool({
+			name: "github.listIssues",
+			execute: () => [
+				{ number: 1, stale: true },
+				{ number: 2, stale: false },
+				{ number: 3, stale: true },
+			],
+		});
+		const closeIssue = tool({
+			name: "github.closeIssue",
+			execute: (args: { number: number }) => {
+				closed.push(args.number);
+				return { closed: args.number };
+			},
+		});
+		const engine = callscript({ tools: [listIssues, closeIssue] });
+		const result = await engine.run({
+			script: `
+				const issues = await github.listIssues({});
+				for (const i of issues) {
+					const n = i.number;
+					if (!i.stale) continue;
+					await github.closeIssue({ number: n * 10 });
+				}
+			`,
+		});
+		expect(result.status).toBe("ok");
+		expect(closed.sort()).toEqual([10, 30]);
+	});
+
+	it("a real loop body stays rejected with the fan-out spelling", () => {
+		const message = /one awaited tool call.*Promise\.all\(list\.map/;
+		expect(
+			issuesOf(() =>
+				parseJsScript(`
+					for (const i of issues) {
+						await github.closeIssue({ number: i.number });
+						await slack.post({ text: "closed" });
+					}
+				`),
+			)[0],
+		).toMatch(message);
+		expect(
+			issuesOf(() =>
+				parseJsScript(`
+					for (const i of issues) {
+						if (i.stale) await github.closeIssue({ number: i.number });
+						else await slack.post({ text: "kept" });
+					}
+				`),
+			)[0],
+		).toMatch(message);
+		expect(
+			issuesOf(() =>
+				parseJsScript(`
+					for (const i of issues) {
+						if (i.stale) return { first: i };
+					}
+				`),
+			)[0],
+		).toMatch(message);
+	});
+});
+
 describe("effect ordering", () => {
 	it("sequential awaited calls chain via after; data edges suppress it", () => {
 		const script = parseJsScript(`
