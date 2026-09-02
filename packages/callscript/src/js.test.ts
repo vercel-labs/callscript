@@ -600,6 +600,117 @@ describe("for..of bodies", () => {
 	});
 });
 
+describe("await hoisting", () => {
+	// an awaited call nested in an expression compiles into its own step
+	// first, and the expression reads the step - the plan the author gets
+	// by binding it, without the retry that used to demand the binding
+
+	it("`return { x: await tool() }` hoists the call and projects its id", () => {
+		const script = parseJsScript(`
+			return { issues: await github.listIssues({ repo: "api" }), n: 1 };
+		`);
+		expect(script.steps).toEqual([
+			{ id: "s1", call: "github.listIssues", args: { repo: "api" } },
+		]);
+		expect(script.output).toBe("{ issues: s1, n: 1 }");
+	});
+
+	it("an await inside a call's arguments hoists ahead of the call", () => {
+		const script = parseJsScript(`
+			const closed = await github.closeIssue({
+				number: (await github.getIssue({ n: 1 })).number,
+			});
+		`);
+		expect(script.steps).toEqual([
+			{ id: "s1", call: "github.getIssue", args: { n: 1 } },
+			{
+				id: "closed",
+				call: "github.closeIssue",
+				args: { number: "=(s1).number" },
+			},
+		]);
+	});
+
+	it("several awaits hoist in source order and chain like statements", () => {
+		const script = parseJsScript(`
+			const total = (await a.count({})) + (await b.count({}));
+			await slack.post({ text: total });
+		`);
+		const [first, second, total, post] = script.steps as [
+			CallStep,
+			CallStep,
+			LetStep,
+			CallStep,
+		];
+		expect(first).toEqual({ id: "s1", call: "a.count", args: {} });
+		expect(second).toEqual({
+			id: "s2",
+			call: "b.count",
+			args: {},
+			after: ["s1"],
+		});
+		expect(total).toEqual({ id: "total", let: "(s1) + (s2)" });
+		// the post reads total, which closes over both calls - no after edge
+		expect(post.after).toBeUndefined();
+	});
+
+	it("hoists inside guards and catch blocks, renames intact", () => {
+		const script = parseJsScript(`
+			try {
+				const closed = await github.closeIssue({ number: 1 });
+			} catch (e) {
+				const report = { text: e.message, sent: await slack.post({ text: e.message }) };
+			}
+		`);
+		const [, post, report] = script.steps as [CallStep, CallStep, LetStep];
+		expect(post).toMatchObject({
+			id: "s1",
+			call: "slack.post",
+			args: { text: "=$errors.closed.message" },
+			if: "$errors.closed",
+		});
+		expect(report).toEqual({
+			id: "report",
+			let: "{ text: $errors.closed.message, sent: s1 }",
+			if: "$errors.closed",
+		});
+	});
+
+	it("runs end to end through the engine", async () => {
+		const listIssues = tool({
+			name: "github.listIssues",
+			execute: (args: { repo: string }) => [
+				{ number: 1, repo: args.repo },
+				{ number: 2, repo: args.repo },
+			],
+		});
+		const engine = callscript({ tools: [listIssues] });
+		const result = await engine.run({
+			script: `
+				const n = (await github.listIssues({ repo: "api" })).length;
+				return { n, again: (await github.listIssues({ repo: "web" })).map(i => i.repo) };
+			`,
+		});
+		expect(result.status).toBe("ok");
+		if (result.status === "ok") {
+			expect(result.output).toEqual({ n: 2, again: ["web", "web"] });
+		}
+	});
+
+	it("a nested Promise.all and an await on a non-call stay rejected", () => {
+		expect(
+			issuesOf(() =>
+				parseJsScript(`
+					return { closed: await Promise.all(xs.map(x => t.close({ x }))) };
+				`),
+			)[0],
+		).toMatch(/bind a fan-out first/);
+		expect(
+			issuesOf(() => parseJsScript(`return { v: (await job) + 1 };`))[0],
+		).toMatch(/await belongs directly on a tool call/);
+	});
+});
+
 describe("effect ordering", () => {
 	it("sequential awaited calls chain via after; data edges suppress it", () => {
 		const script = parseJsScript(`
@@ -717,11 +828,29 @@ describe("teaching rejections", () => {
 		}
 	});
 
-	it("await deep in an expression names the bind-first fix", () => {
-		const issues = issuesOf(() =>
-			parseJsScript(`const n = (await t.count({})) + 1;`),
-		);
-		expect(issues.join("\n")).toContain("bind it first");
+	it("await inside an arrow names the fan-out; inside a fan-out, the bind-first fix", () => {
+		expect(
+			issuesOf(() =>
+				parseJsScript(`const n = xs.map(async x => await t.count({ x }));`),
+			).join("\n"),
+		).toMatch(/await inside an arrow.*Promise\.all\(list\.map/);
+		expect(
+			issuesOf(() =>
+				parseJsScript(`
+					const done = await Promise.all(xs.map(async x => t.close({ id: (await t.find({ x })).id })));
+				`),
+			).join("\n"),
+		).toMatch(/fan-out's arguments cannot await.*const x = await/);
+		expect(
+			issuesOf(() =>
+				parseJsScript(`
+					for (const x of xs) {
+						const found = { id: await t.find({ x }) };
+						await t.close({ id: found.id });
+					}
+				`),
+			).join("\n"),
+		).toMatch(/for\.\.of body|cannot await/);
 	});
 
 	it("issues carry source lines", () => {

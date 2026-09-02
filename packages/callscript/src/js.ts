@@ -66,6 +66,10 @@ type Ctx = {
 	/** True only for the program's own statement list - where a trailing
 	 * `return` is the script's `output` rather than a guard step. */
 	topLevel: boolean;
+	/** Inside a fan-out's own arrow/body: a nested await cannot be hoisted
+	 * out (the step would read the per-element binding), so it is rejected
+	 * with the bind-first fix instead. */
+	noHoist?: boolean;
 };
 
 /**
@@ -199,18 +203,115 @@ export function parseJsScript(
 		return false;
 	};
 
-	/** Slice a node as an expression string: renames applied, grammar
-	 * checked (the checker's messages teach the pure-JS subset). */
-	const exprSrc = (node: acorn.AnyNode, ctx: Ctx): string | undefined => {
-		if (containsAwait(node)) {
+	/**
+	 * HOISTING: an awaited tool call nested in an expression - `return {
+	 * issues: await repo.list({}) }`, `tool({ id: (await other({})).id })`
+	 * - compiles into its own call step first, and the expression reads
+	 * the step where the await stood: exactly what the author gets by
+	 * binding it, so the plan is the same one. Statement order holds -
+	 * hoisted calls join the effect frontier like any awaited call, in
+	 * source order. Not hoistable: an await inside an arrow (a closure
+	 * runs per element - that is the fan-out's job) and any await inside
+	 * a fan-out's own arguments (`noHoist`). Returns the expression text
+	 * with every hoisted span replaced by its step id.
+	 */
+	const hoistAwaits = (node: acorn.AnyNode, ctx: Ctx): string | undefined => {
+		const awaits: acorn.AwaitExpression[] = [];
+		const collect = (n: unknown): void => {
+			if (n === null || typeof n !== "object") return;
+			const v = n as Record<string, unknown> & { type?: string };
+			if (
+				v.type === "ArrowFunctionExpression" ||
+				v.type === "FunctionExpression"
+			) {
+				return;
+			}
+			if (v.type === "AwaitExpression") {
+				// outermost only - an await inside this call's own arguments
+				// hoists when the call compiles its args
+				awaits.push(n as acorn.AwaitExpression);
+				return;
+			}
+			for (const [key, value] of Object.entries(v)) {
+				if (key === "loc") continue;
+				if (Array.isArray(value)) value.forEach(collect);
+				else if (
+					value !== null &&
+					typeof value === "object" &&
+					typeof (value as { type?: unknown }).type === "string"
+				) {
+					collect(value);
+				}
+			}
+		};
+		collect(node);
+		awaits.sort((a, b) => a.start - b.start);
+		if (ctx.noHoist) {
 			return issue(
 				node,
-				"await belongs on its own statement - bind it first (const x = await tool.name({ ... })), then derive from x",
+				"a fan-out's arguments cannot await - compute the value before the fan-out (const x = await tool.name({ ... })), then read x",
 			);
 		}
+		if (awaits.length === 0) {
+			return issue(
+				node,
+				"await inside an arrow cannot run - fan out instead: await Promise.all(list.map(item => tool.name({ ... })))",
+			);
+		}
+		const edits: { start: number; end: number; text: string }[] = [];
+		for (const a of awaits) {
+			const arg = a.argument;
+			const callee =
+				arg.type === "CallExpression" ? dottedName(arg.callee) : undefined;
+			if (callee === "Promise.all") {
+				return issue(
+					a,
+					"bind a fan-out first: const results = await Promise.all(...), then read results",
+				);
+			}
+			if (arg.type !== "CallExpression" || callee === undefined) {
+				return issue(
+					a,
+					"await belongs directly on a tool call - bind it first (const x = await tool.name({ ... })), then derive from x",
+				);
+			}
+			const step = compileCall(arg, mint(), ctx);
+			if (step === undefined) return undefined;
+			pushCall(step, ctx);
+			edits.push({ start: a.start, end: a.end, text: step.id });
+		}
 		let text = source.slice(node.start, node.end);
+		for (const e of edits.sort((x, y) => y.start - x.start)) {
+			text =
+				text.slice(0, e.start - node.start) +
+				e.text +
+				text.slice(e.end - node.start);
+		}
 		if (ctx.renames !== undefined && ctx.renames.size > 0) {
-			text = renameIdentifiers(text, node, node.start, ctx.renames);
+			// the spans are gone, so rename against a fresh parse of the text
+			const reparsed = acorn.parseExpressionAt(text, 0, {
+				ecmaVersion: 2022,
+				sourceType: "script",
+			});
+			text = renameIdentifiers(text, reparsed as acorn.AnyNode, 0, ctx.renames);
+		}
+		return text;
+	};
+
+	/** Slice a node as an expression string: nested awaits hoisted,
+	 * renames applied, grammar checked (the checker's messages teach the
+	 * pure-JS subset). */
+	const exprSrc = (node: acorn.AnyNode, ctx: Ctx): string | undefined => {
+		let text: string;
+		if (containsAwait(node)) {
+			const hoisted = hoistAwaits(node, ctx);
+			if (hoisted === undefined) return undefined;
+			text = hoisted;
+		} else {
+			text = source.slice(node.start, node.end);
+			if (ctx.renames !== undefined && ctx.renames.size > 0) {
+				text = renameIdentifiers(text, node, node.start, ctx.renames);
+			}
 		}
 		try {
 			parseExpr(text);
@@ -696,6 +797,7 @@ export function parseJsScript(
 		const innerCtx: Ctx = {
 			...ctx,
 			renames: shadowRenames(ctx.renames, cb.params),
+			noHoist: true,
 		};
 		const step = compileCall(body, id, innerCtx);
 		if (step === undefined) return undefined;
@@ -1154,7 +1256,11 @@ export function parseJsScript(
 				) {
 					for (const d of stmt.declarations) {
 						if (d.id.type !== "Identifier") return reject(d.id);
-						const text = exprSrc(d.init as acorn.AnyNode, { ...ctx, renames });
+						const text = exprSrc(d.init as acorn.AnyNode, {
+							...ctx,
+							renames,
+							noHoist: true,
+						});
 						if (text === undefined) return false;
 						renames = new Map(renames);
 						renames.set(d.id.name, `(${text})`);
@@ -1164,7 +1270,7 @@ export function parseJsScript(
 				// Guards: `if (cond) continue;` skips the item, `if (cond) {
 				// ... }` ending the body keeps only the items that pass.
 				if (stmt.type === "IfStatement" && !stmt.alternate) {
-					const cond = exprSrc(stmt.test, { ...ctx, renames });
+					const cond = exprSrc(stmt.test, { ...ctx, renames, noHoist: true });
 					if (cond === undefined) return false;
 					const inner =
 						stmt.consequent.type === "BlockStatement"
@@ -1204,7 +1310,7 @@ export function parseJsScript(
 			node.body.type === "BlockStatement" ? node.body.body : [node.body];
 		if (!walk(body) || call === undefined) return;
 
-		const innerCtx: Ctx = { ...ctx, renames };
+		const innerCtx: Ctx = { ...ctx, renames, noHoist: true };
 		const step = compileCall(call, mint(), innerCtx);
 		if (step === undefined) return;
 		const argsNode = call.arguments[0];
