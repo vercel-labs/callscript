@@ -103,6 +103,31 @@ describe("validateScript", () => {
 		expect(issues.join("\n")).toMatch(/Unknown tool "listIsues"/);
 	});
 
+	it("an unknown tool suggests the nearest mounted name", () => {
+		const tools = ["github.listIssues", "github.closeIssue", "chat.post"];
+		const message = (call: string) =>
+			issuesOf(() =>
+				validateScript({ steps: [{ call, reason: "r" }] }, { tools }),
+			).join("\n");
+		// a typo in the name
+		expect(message("github.listIsues")).toMatch(
+			/did you mean "github\.listIssues"\?/,
+		);
+		// the right tool under the wrong namespace
+		expect(message("slack.post")).toMatch(/did you mean "chat\.post"\?/);
+		// nothing close: no guess, a wrong one costs a retry too
+		expect(message("deploy.rollback")).not.toMatch(/did you mean/);
+		// the host's hint still rides along
+		expect(
+			issuesOf(() =>
+				validateScript(
+					{ steps: [{ call: "github.listIsues", reason: "r" }] },
+					{ tools, unknownToolHint: "search for tools first" },
+				),
+			).join("\n"),
+		).toMatch(/did you mean "github\.listIssues"\? - search for tools first/);
+	});
+
 	it("known-tool names ending in '.*' are prefix patterns", () => {
 		const tools = ["shout", "github.*"];
 		expect(() =>
