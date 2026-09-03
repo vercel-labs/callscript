@@ -36,6 +36,14 @@ export const GLOBAL_NAMES = new Set([
 	"Boolean",
 	"Base64",
 	"undefined",
+	"parseInt",
+	"parseFloat",
+	"isNaN",
+	"isFinite",
+	"encodeURIComponent",
+	"decodeURIComponent",
+	"encodeURI",
+	"decodeURI",
 ]);
 
 const ALLOWED_BINARY = new Set([
@@ -161,8 +169,8 @@ export function validateNode(node: acorn.AnyNode): void {
 				fail(callee, "computed callee");
 			}
 			for (const arg of node.arguments) {
-				if (arg.type === "SpreadElement") fail(arg, "spread in call arguments");
-				validateNode(arg);
+				// `Math.max(...xs)` spreads a script array - pure, so allowed.
+				validateNode(arg.type === "SpreadElement" ? arg.argument : arg);
 			}
 			return;
 		}

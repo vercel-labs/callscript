@@ -113,6 +113,67 @@ describe("evalExpr", () => {
 		).toThrow(/budget/);
 	});
 
+	it("covers the pure array and string methods models reach for", () => {
+		const xs = [3, 1, 2];
+		expect(evalExpr("xs.at(-1)", { xs })).toBe(2);
+		expect(evalExpr("xs.findLast(x => x > 1)", { xs })).toBe(2);
+		expect(evalExpr("xs.findLastIndex(x => x > 1)", { xs })).toBe(2);
+		expect(evalExpr("xs.lastIndexOf(1)", { xs })).toBe(1);
+		expect(evalExpr("xs.toSorted((a, b) => a - b)", { xs })).toEqual([1, 2, 3]);
+		expect(evalExpr("xs.toReversed()", { xs })).toEqual([2, 1, 3]);
+		expect(xs).toEqual([3, 1, 2]); // untouched
+		const s = "  Hi there ";
+		expect(evalExpr("s.trimStart()", { s })).toBe("Hi there ");
+		expect(evalExpr("s.trimEnd()", { s })).toBe("  Hi there");
+		expect(evalExpr("s.trim().at(0)", { s })).toBe("H");
+		expect(evalExpr("s.trim().substring(0, 2)", { s })).toBe("Hi");
+		expect(evalExpr("s.trim().charCodeAt(0)", { s })).toBe(72);
+		expect(evalExpr('s.trim().concat("!", 1)', { s })).toBe("Hi there!1");
+	});
+
+	it("callable globals: bare calls, and as callbacks", () => {
+		expect(evalExpr('parseInt("42px")', {})).toBe(42);
+		expect(evalExpr('parseFloat("4.5kg")', {})).toBe(4.5);
+		expect(evalExpr('isNaN("x") && isFinite(1)', {})).toBe(true);
+		expect(evalExpr('encodeURIComponent("a b&c")', {})).toBe("a%20b%26c");
+		expect(evalExpr('decodeURIComponent("a%20b")', {})).toBe("a b");
+		expect(evalExpr('["1", "2"].map(Number)', {})).toEqual([1, 2]);
+		expect(evalExpr("[1, 2].map(String)", {})).toEqual(["1", "2"]);
+		expect(evalExpr('[0, 1, "", "a"].filter(Boolean)', {})).toEqual([1, "a"]);
+		// still a namespace
+		expect(
+			evalExpr("Number.isInteger(2) && Number.MAX_SAFE_INTEGER > 0", {}),
+		).toBe(true);
+		// a bare global is a value the checker knows, not a free reference
+		expect(
+			collectRefs(parseExpr("xs.map(parseInt).filter(isFinite)")).size,
+		).toBe(1);
+	});
+
+	it("spreads arrays into call arguments and merges with Object.assign", () => {
+		expect(evalExpr("Math.max(...xs, 0)", { xs: [3, 1, 2] })).toBe(3);
+		expect(evalExpr("Math.min(...xs)", { xs: [3, 1, 2] })).toBe(1);
+		expect(() => evalExpr("Math.max(...5)", {})).toThrow(
+			/Spread expects an array/,
+		);
+		const o = { a: 1 };
+		expect(evalExpr("Object.assign({}, o, { b: 2 }, null)", { o })).toEqual({
+			a: 1,
+			b: 2,
+		});
+		expect(o).toEqual({ a: 1 }); // the merge never lands in a script value
+	});
+
+	it("names the immutable spelling for mutators and refuses Math.random", () => {
+		expect(() => evalExpr("xs.push(1)", { xs: [] })).toThrow(
+			/mutates.*\[\.\.\.xs, x\]/,
+		);
+		expect(() => evalExpr("xs.splice(0, 1)", { xs: [1] })).toThrow(/mutates/);
+		expect(() => evalExpr("Math.random()", {})).toThrow(
+			/replay deterministically/,
+		);
+	});
+
 	it("does not allow calling functions read from data", () => {
 		const evil = { fn: () => "boom" };
 		expect(() => evalExpr("evil.fn()", { evil })).toThrow(ExprError);

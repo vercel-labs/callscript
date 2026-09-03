@@ -52,6 +52,9 @@ const SAFE_OBJECT = Object.freeze({
 			throw new ExprError("Object.fromEntries expects an array", "type");
 		return Object.fromEntries(e as [string, unknown][]);
 	},
+	/** Non-mutating: the merge lands in a fresh object, never in `target`. */
+	assign: (...objs: unknown[]) =>
+		Object.assign({}, ...objs.map((o) => (o == null ? {} : asRecord(o)))),
 	/** Standard since ES2024 and THE group-by primitive scripts need. */
 	groupBy: (items: unknown, fn: unknown) => {
 		if (!Array.isArray(items))
@@ -94,15 +97,44 @@ const SAFE_BASE64 = Object.freeze({
 		Buffer.from(String(v), "base64url").toString("utf8"),
 });
 
-const SAFE_NUMBER = Object.freeze({
-	isFinite: Number.isFinite,
-	isInteger: Number.isInteger,
-	isNaN: Number.isNaN,
-	parseFloat: Number.parseFloat,
-	parseInt: Number.parseInt,
-	MAX_SAFE_INTEGER: Number.MAX_SAFE_INTEGER,
-	MIN_SAFE_INTEGER: Number.MIN_SAFE_INTEGER,
-});
+/** `Number` is both a namespace (Number.isInteger) and a converter
+ * (Number("3")) - and, as a bare value, the callback in `xs.map(Number)`. */
+const SAFE_NUMBER = Object.freeze(
+	Object.assign((v: unknown) => Number(v), {
+		isFinite: Number.isFinite,
+		isInteger: Number.isInteger,
+		isNaN: Number.isNaN,
+		parseFloat: Number.parseFloat,
+		parseInt: Number.parseInt,
+		MAX_SAFE_INTEGER: Number.MAX_SAFE_INTEGER,
+		MIN_SAFE_INTEGER: Number.MIN_SAFE_INTEGER,
+	}),
+);
+
+/**
+ * Globals callable as bare functions - `String(4)`, `parseInt(s)`,
+ * `encodeURIComponent(q)` - and passable as callbacks: `xs.map(String)`,
+ * `xs.filter(Boolean)`. Pure value-to-value natives, no host authority.
+ */
+const CALLABLE_GLOBALS: Record<string, (...args: unknown[]) => unknown> = {
+	Number: SAFE_NUMBER,
+	String: Object.freeze((v: unknown) => String(v)),
+	Boolean: Object.freeze((v: unknown) => Boolean(v)),
+	parseInt: Object.freeze((v: unknown, radix?: unknown) =>
+		Number.parseInt(String(v), radix as number | undefined),
+	),
+	parseFloat: Object.freeze((v: unknown) => Number.parseFloat(String(v))),
+	isNaN: Object.freeze((v: unknown) => Number.isNaN(Number(v))),
+	isFinite: Object.freeze((v: unknown) => Number.isFinite(Number(v))),
+	encodeURIComponent: Object.freeze((v: unknown) =>
+		encodeURIComponent(String(v)),
+	),
+	decodeURIComponent: Object.freeze((v: unknown) =>
+		decodeURIComponent(String(v)),
+	),
+	encodeURI: Object.freeze((v: unknown) => encodeURI(String(v))),
+	decodeURI: Object.freeze((v: unknown) => decodeURI(String(v))),
+};
 
 const NAMESPACES: Record<string, unknown> = {
 	Math: SAFE_MATH,
@@ -110,9 +142,9 @@ const NAMESPACES: Record<string, unknown> = {
 	Date: SAFE_DATE,
 	Object: SAFE_OBJECT,
 	Array: SAFE_ARRAY,
-	Number: SAFE_NUMBER,
 	Base64: SAFE_BASE64,
 	undefined,
+	...CALLABLE_GLOBALS,
 };
 
 const NAMESPACE_VALUES = new Set<unknown>([
@@ -121,15 +153,20 @@ const NAMESPACE_VALUES = new Set<unknown>([
 	SAFE_DATE,
 	SAFE_OBJECT,
 	SAFE_ARRAY,
-	SAFE_NUMBER,
 	SAFE_BASE64,
+	...Object.values(CALLABLE_GLOBALS),
 ]);
 
-/** Globals callable as bare functions: Number("3"), String(4), Boolean(x). */
-const CALLABLE_GLOBALS: Record<string, (...args: unknown[]) => unknown> = {
-	Number: (v: unknown) => Number(v),
-	String: (v: unknown) => String(v),
-	Boolean: (v: unknown) => Boolean(v),
+/** Array mutators, named with the immutable spelling: script data never
+ * changes in place, and a copy is what the author wanted anyway. */
+const ARRAY_MUTATORS: Record<string, string> = {
+	push: "[...xs, x]",
+	unshift: "[x, ...xs]",
+	pop: "xs.slice(0, -1)",
+	shift: "xs.slice(1)",
+	splice: "xs.filter((_, i) => ...) or [...xs.slice(0, i), ...xs.slice(j)]",
+	fill: "xs.map(() => v)",
+	copyWithin: "a new array literal",
 };
 
 /* --------------------------- method whitelists ---------------------------- */
@@ -174,10 +211,17 @@ const ARRAY_METHODS: Record<
 	concat: (a, args) => a.concat(...(args as unknown[][])),
 	join: (a, [sep]) => a.join(sep as string | undefined),
 	flat: (a, [d]) => a.flat((d as number) ?? 1),
+	at: (a, [i]) => a.at(i as number),
+	findLast: (a, [f]) => a.findLast((x, i, arr) => asFn(f)(x, i, arr)),
+	findLastIndex: (a, [f]) => a.findLastIndex((x, i, arr) => asFn(f)(x, i, arr)),
+	lastIndexOf: (a, [v]) => a.lastIndexOf(v),
 	// Non-mutating variants: script data is immutable.
 	sort: (a, [f]) =>
 		[...a].sort(f === undefined ? undefined : (x, y) => Number(asFn(f)(x, y))),
+	toSorted: (a, [f]) =>
+		[...a].sort(f === undefined ? undefined : (x, y) => Number(asFn(f)(x, y))),
 	reverse: (a) => [...a].reverse(),
+	toReversed: (a) => [...a].reverse(),
 };
 
 const STRING_METHODS: Record<string, (s: string, args: unknown[]) => unknown> =
@@ -204,6 +248,12 @@ const STRING_METHODS: Record<string, (s: string, args: unknown[]) => unknown> =
 			return s.repeat(count);
 		},
 		localeCompare: (s, [v]) => s.localeCompare(String(v)),
+		at: (s, [i]) => s.at(i as number),
+		substring: (s, [a, b]) => s.substring(a as number, b as number | undefined),
+		trimStart: (s) => s.trimStart(),
+		trimEnd: (s) => s.trimEnd(),
+		charCodeAt: (s, [i]) => s.charCodeAt(i as number),
+		concat: (s, args) => s.concat(...args.map(String)),
 	};
 
 const NUMBER_METHODS: Record<string, (n: number, args: unknown[]) => unknown> =
@@ -295,17 +345,27 @@ function callMethod(obj: unknown, method: string, args: unknown[]): unknown {
 	if (NAMESPACE_VALUES.has(obj)) {
 		const fn = (obj as Record<string, unknown>)[method];
 		if (typeof fn !== "function") {
+			if (obj === SAFE_MATH && method === "random") {
+				throw new ExprError(
+					"Math.random is not available - a run must replay deterministically; take randomness from a tool or from input",
+					"forbidden",
+				);
+			}
 			throw new ExprError(`Unknown function "${method}"`, "reference");
 		}
 		return (fn as (...a: unknown[]) => unknown)(...args);
 	}
 	if (Array.isArray(obj)) {
 		const impl = ARRAY_METHODS[method];
-		if (!impl)
+		if (!impl) {
+			const instead = ARRAY_MUTATORS[method];
 			throw new ExprError(
-				`Array method "${method}" is not allowed`,
+				instead === undefined
+					? `Array method "${method}" is not allowed`
+					: `Array method "${method}" mutates - script data is immutable; build a new array: ${instead}`,
 				"forbidden",
 			);
+		}
 		return impl(obj, args);
 	}
 	if (typeof obj === "string") {
@@ -503,15 +563,25 @@ function evaluateCall(
 	ctx: EvalCtx,
 ): unknown {
 	const callee = node.callee;
-	const args = node.arguments.map((a) =>
-		evaluate(a as acorn.Expression, scope, ctx),
-	);
+	const args: unknown[] = [];
+	for (const a of node.arguments) {
+		if (a.type === "SpreadElement") {
+			// Math.max(...xs) - the spelling models reach for first
+			const v = evaluate(a.argument, scope, ctx);
+			if (!Array.isArray(v)) {
+				throw new ExprError("Spread expects an array", "type");
+			}
+			args.push(...v);
+		} else {
+			args.push(evaluate(a, scope, ctx));
+		}
+	}
 
 	if (callee.type === "Identifier") {
 		const fn = CALLABLE_GLOBALS[callee.name];
 		if (!fn) {
 			throw new ExprError(
-				`"${callee.name}" is not callable (only Number, String, Boolean)`,
+				`"${callee.name}" is not callable (only ${Object.keys(CALLABLE_GLOBALS).join(", ")})`,
 				"reference",
 			);
 		}
