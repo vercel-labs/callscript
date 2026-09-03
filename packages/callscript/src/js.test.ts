@@ -812,6 +812,103 @@ describe("conditional assignment", () => {
 	});
 });
 
+describe("wrappers", () => {
+	// a model picturing a module wraps top-level await; the body is the
+	// script, so it compiles as the program
+
+	it("an async IIFE unwraps: body statements, return as output, comment as intent", () => {
+		for (const src of [
+			`
+				// close stale issues
+				(async () => {
+					const issues = await github.listIssues({ repo: "api" });
+					return { n: issues.length };
+				})();
+			`,
+			`
+				// close stale issues
+				await (async function () {
+					const issues = await github.listIssues({ repo: "api" });
+					return { n: issues.length };
+				})();
+			`,
+		]) {
+			const script = parseJsScript(src);
+			expect(script.intent).toBe("close stale issues");
+			expect(script.steps).toEqual([
+				{ id: "issues", call: "github.listIssues", args: { repo: "api" } },
+			]);
+			expect(script.output).toBe("{ n: issues.length }");
+		}
+	});
+
+	it("`async function main() { ... } main()` unwraps the same way", () => {
+		for (const tail of ["main();", "await main();"]) {
+			const script = parseJsScript(`
+				async function main() {
+					const issues = await github.listIssues({ repo: "api" });
+					if (issues.length === 0) return { n: 0 };
+					return { n: issues.length };
+				}
+				${tail}
+			`);
+			expect(script.steps.map((s) => s.id)).toEqual(["issues", "s1"]);
+			expect(script.output).toBe("{ n: issues.length }");
+		}
+	});
+
+	it("names inside the wrapper still reserve their ids", () => {
+		const script = parseJsScript(`
+			(async () => {
+				const s1 = await t.a({});
+				return { x: await t.b({}) };
+			})();
+		`);
+		expect(script.steps.map((s) => s.id)).toEqual(["s1", "s2"]);
+	});
+
+	it("runs end to end through the engine", async () => {
+		const listIssues = tool({
+			name: "github.listIssues",
+			execute: () => [{ number: 1 }, { number: 2 }],
+		});
+		const engine = callscript({ tools: [listIssues] });
+		const result = await engine.run({
+			script: `
+				async function main() {
+					const issues = await github.listIssues({});
+					return { n: issues.length };
+				}
+				main();
+			`,
+		});
+		expect(result.status).toBe("ok");
+		if (result.status === "ok") expect(result.output).toEqual({ n: 2 });
+	});
+
+	it("a .catch on the wrapper, or a main() not called plainly, is rejected with the reason", () => {
+		expect(
+			issuesOf(() =>
+				parseJsScript(`
+					(async () => {
+						await github.listIssues({ repo: "api" });
+					})().catch(console.error);
+				`),
+			).join("\n"),
+		).toMatch(/drop the \.then\/\.catch/);
+		expect(
+			issuesOf(() =>
+				parseJsScript(`
+					async function main() {
+						await github.listIssues({ repo: "api" });
+					}
+					main().catch(console.error);
+				`),
+			).join("\n"),
+		).toMatch(/call the wrapper plainly.*main\(\)/);
+	});
+});
+
 describe("effect ordering", () => {
 	it("sequential awaited calls chain via after; data edges suppress it", () => {
 		const script = parseJsScript(`

@@ -159,7 +159,80 @@ export function parseJsScript(
 			}
 		}
 	};
-	scanNames(program.body);
+	/**
+	 * WRAPPERS: `(async () => { ... })()` - awaited or not - and `async
+	 * function main() { ... }` followed by `main()` are how a model wraps
+	 * top-level await when it pictures a real module. The body IS the
+	 * script, so it compiles as the program: its trailing `return` is the
+	 * output, a leading comment the intent. A `.catch`/`.then` on the
+	 * wrapper is rejected with the reason - a failed call already fails
+	 * the run.
+	 */
+	type TopLevel = acorn.Statement | acorn.ModuleDeclaration;
+	const unwrapProgram = (stmts: readonly TopLevel[]): readonly TopLevel[] => {
+		/** The zero-argument call a statement makes, awaited or not. */
+		const callOf = (
+			stmt: TopLevel | undefined,
+		): acorn.CallExpression | undefined => {
+			if (stmt?.type !== "ExpressionStatement") return undefined;
+			let expr: acorn.Expression = stmt.expression;
+			if (expr.type === "AwaitExpression") expr = expr.argument;
+			return expr.type === "CallExpression" && expr.arguments.length === 0
+				? expr
+				: undefined;
+		};
+		const isWrapperFn = (
+			node: acorn.Expression | acorn.Super,
+		): node is acorn.ArrowFunctionExpression | acorn.FunctionExpression =>
+			(node.type === "ArrowFunctionExpression" ||
+				node.type === "FunctionExpression") &&
+			node.params.length === 0 &&
+			node.body.type === "BlockStatement";
+		if (stmts.length === 1) {
+			const call = callOf(stmts[0]);
+			if (call !== undefined && isWrapperFn(call.callee)) {
+				return (call.callee.body as acorn.BlockStatement).body;
+			}
+			// (async () => { ... })().catch(...) - the chained call is the tell
+			const stmt = stmts[0]!;
+			const expr =
+				stmt.type === "ExpressionStatement"
+					? stmt.expression.type === "AwaitExpression"
+						? stmt.expression.argument
+						: stmt.expression
+					: undefined;
+			if (
+				expr?.type === "CallExpression" &&
+				expr.callee.type === "MemberExpression" &&
+				expr.callee.object.type === "CallExpression" &&
+				isWrapperFn(expr.callee.object.callee)
+			) {
+				issue(
+					expr.callee.property,
+					"drop the .then/.catch on the wrapper - a failed call already fails the run, and the wrapper's return is the output",
+				);
+			}
+		}
+		if (
+			stmts.length === 2 &&
+			stmts[0]!.type === "FunctionDeclaration" &&
+			stmts[0]!.params.length === 0
+		) {
+			const fn = stmts[0] as acorn.FunctionDeclaration;
+			const name = fn.id?.name;
+			const call = callOf(stmts[1]);
+			if (call?.callee.type === "Identifier" && call.callee.name === name) {
+				return fn.body.body;
+			}
+			issue(
+				stmts[1]!,
+				`call the wrapper plainly as the last statement - ${name}() or await ${name}() - or drop it and write the statements at top level`,
+			);
+		}
+		return stmts;
+	};
+	const programBody = unwrapProgram(program.body);
+	scanNames(programBody);
 	let mintCounter = 0;
 	const mint = (): string => {
 		let id: string;
@@ -1607,7 +1680,7 @@ export function parseJsScript(
 
 	/* -------------------------------- program ------------------------------ */
 
-	const body = [...program.body];
+	const body = [...programBody];
 	// Intent: the leading comment's first line, or a leading string directive.
 	let intent: string | undefined;
 	const firstStart = body[0]?.start ?? source.length;
