@@ -844,8 +844,166 @@ export function parseJsScript(
 		return undefined;
 	};
 
+	/** What a fan-out body compiled to: the one call, the guards it sits
+	 * behind, and the local renames in force where it reads. */
+	type FanOutBody = {
+		call: acorn.CallExpression;
+		filters: string[];
+		renames: Map<string, string>;
+	};
+
+	/**
+	 * A fan-out BODY - the block of a `for..of`, or of a `list.map(async
+	 * item => { ... })` arrow - may carry what a map arrow can express:
+	 * pure locals (inlined into the call as renames - `const n =
+	 * i.number` becomes `(i.number)`), skip guards (`if (cond) continue;`
+	 * in a loop, `if (cond) return;` in an arrow), a trailing `if (cond)
+	 * { ... }` around the call, and exactly one awaited tool call: bound,
+	 * bare, or (in an arrow) returned. A second call, an else, or other
+	 * work is a real body, and `shape.message` names the fan-out spelling.
+	 */
+	const fanOutBody = (
+		stmts: readonly acorn.Statement[],
+		params: readonly acorn.Pattern[],
+		ctx: Ctx,
+		shape: { skip: "continue" | "return"; message: string; at: acorn.AnyNode },
+	): FanOutBody | undefined => {
+		const reject = (at: acorn.AnyNode): false => {
+			issue(at, shape.message);
+			return false;
+		};
+		const isSkip = (s: acorn.Statement): boolean =>
+			shape.skip === "continue"
+				? s.type === "ContinueStatement"
+				: s.type === "ReturnStatement" && s.argument == null;
+		/** The awaited call a statement makes, in the forms the body allows. */
+		const callIn = (s: acorn.Statement): acorn.Expression | undefined => {
+			if (s.type === "ExpressionStatement") {
+				return s.expression.type === "AwaitExpression"
+					? s.expression.argument
+					: undefined;
+			}
+			if (s.type === "VariableDeclaration") {
+				const init =
+					s.declarations.length === 1 ? s.declarations[0]!.init : null;
+				return init?.type === "AwaitExpression" ? init.argument : undefined;
+			}
+			if (
+				shape.skip === "return" &&
+				s.type === "ReturnStatement" &&
+				s.argument
+			) {
+				return s.argument.type === "AwaitExpression"
+					? s.argument.argument
+					: s.argument;
+			}
+			return undefined;
+		};
+		let renames = new Map(shadowRenames(ctx.renames, params) ?? []);
+		const filters: string[] = [];
+		let call: acorn.CallExpression | undefined;
+
+		const walk = (body: readonly acorn.Statement[]): boolean => {
+			for (const [index, stmt] of body.entries()) {
+				const last = index === body.length - 1;
+				if (stmt.type === "EmptyStatement") continue;
+				// Pure locals: inlined wherever the body reads them.
+				if (
+					stmt.type === "VariableDeclaration" &&
+					stmt.declarations.every(
+						(d) => d.init != null && d.init.type !== "AwaitExpression",
+					)
+				) {
+					for (const d of stmt.declarations) {
+						if (d.id.type !== "Identifier") return reject(d.id);
+						const text = exprSrc(d.init as acorn.AnyNode, {
+							...ctx,
+							renames,
+							noHoist: true,
+						});
+						if (text === undefined) return false;
+						renames = new Map(renames);
+						renames.set(d.id.name, `(${text})`);
+					}
+					continue;
+				}
+				// Guards: a skip drops the item, a trailing `if (cond) { ... }`
+				// keeps only the items that pass.
+				if (stmt.type === "IfStatement" && !stmt.alternate) {
+					const cond = exprSrc(stmt.test, { ...ctx, renames, noHoist: true });
+					if (cond === undefined) return false;
+					const inner =
+						stmt.consequent.type === "BlockStatement"
+							? stmt.consequent.body
+							: [stmt.consequent];
+					if (inner.length === 1 && isSkip(inner[0]!)) {
+						filters.push(`!(${cond})`);
+						continue;
+					}
+					if (!last) return reject(stmt);
+					filters.push(cond);
+					return walk(inner);
+				}
+				// The one awaited tool call ends the body.
+				const awaited = callIn(stmt);
+				if (
+					awaited === undefined ||
+					awaited.type !== "CallExpression" ||
+					!last
+				) {
+					return reject(stmt);
+				}
+				call = awaited;
+				return true;
+			}
+			return reject(shape.at);
+		};
+		if (!walk(stmts) || call === undefined) return undefined;
+		return { call, filters, renames };
+	};
+
+	/** The `each` step for a fan-out: the call compiled under the body's
+	 * renames, its args re-read per element, the guards as a `.filter`
+	 * on the list - which only shrinks it, so a slice bound still caps
+	 * the fan-out. */
+	const fanOutStep = (
+		body: FanOutBody,
+		id: string,
+		listNode: acorn.AnyNode,
+		paramSrc: string,
+		ctx: Ctx,
+		at: acorn.AnyNode,
+	): CallStep | undefined => {
+		const innerCtx: Ctx = { ...ctx, renames: body.renames, noHoist: true };
+		const step = compileCall(body.call, id, innerCtx);
+		if (step === undefined) return undefined;
+		const listSrc = exprSrc(listNode, ctx);
+		if (listSrc === undefined) return undefined;
+		const argsNode = body.call.arguments[0];
+		const argsSrc =
+			argsNode === undefined
+				? "{}"
+				: exprSrc(argsNode as acorn.AnyNode, innerCtx);
+		if (argsSrc === undefined) return undefined;
+		delete step.args;
+		const list =
+			body.filters.length === 0
+				? `(${listSrc})`
+				: `(${listSrc}).filter((${paramSrc}) => ${body.filters.map((f) => `(${f})`).join(" && ")})`;
+		step.each = `${list}.map((${paramSrc}) => (${argsSrc}))`;
+		try {
+			parseExpr(step.each);
+		} catch (err) {
+			return issue(at, err instanceof ExprError ? err.message : String(err));
+		}
+		const bound = sliceBound(listNode);
+		if (bound !== undefined && step.max === undefined) step.max = bound;
+		return step;
+	};
+
 	/** `await Promise.all(list.map(i => tool.name(args)))` -> an `each`
-	 * fan-out step. The body may be `async i => await tool(...)` too. */
+	 * fan-out step. The arrow may be `async i => await tool(...)`, or
+	 * carry a block body in the fan-out-body grammar. */
 	const compileFanOut = (
 		listNode: acorn.AnyNode,
 		cb: acorn.AnyNode,
@@ -858,29 +1016,30 @@ export function parseJsScript(
 				"fan out with an arrow: Promise.all(list.map(item => tool.name({ ... })))",
 			);
 		}
-		let body: acorn.AnyNode = cb.body as acorn.AnyNode;
-		if (body.type === "BlockStatement") {
-			return issue(
-				cb,
-				"the fan-out arrow must be a single call - list.map(item => tool.name({ ... })), no block body",
-			);
+		let body: FanOutBody | undefined;
+		if (cb.body.type === "BlockStatement") {
+			body = fanOutBody(cb.body.body, cb.params, ctx, {
+				skip: "return",
+				at: cb,
+				message:
+					"a fan-out arrow's block is one awaited tool call, optionally behind local consts and an if guard - or make it the expression: list.map(item => tool.name({ ... }))",
+			});
+			if (body === undefined) return undefined;
+		} else {
+			let expr: acorn.AnyNode = cb.body as acorn.AnyNode;
+			if (expr.type === "AwaitExpression") expr = expr.argument;
+			if (expr.type !== "CallExpression") {
+				return issue(
+					cb,
+					"the fan-out arrow must BE the tool call - compute the list first (const items = ...), then map each item to one call",
+				);
+			}
+			body = {
+				call: expr,
+				filters: [],
+				renames: new Map(shadowRenames(ctx.renames, cb.params) ?? []),
+			};
 		}
-		if (body.type === "AwaitExpression") body = body.argument;
-		if (body.type !== "CallExpression") {
-			return issue(
-				cb,
-				"the fan-out arrow must BE the tool call - compute the list first (const items = ...), then map each item to one call",
-			);
-		}
-		const innerCtx: Ctx = {
-			...ctx,
-			renames: shadowRenames(ctx.renames, cb.params),
-			noHoist: true,
-		};
-		const step = compileCall(body, id, innerCtx);
-		if (step === undefined) return undefined;
-		const listSrc = exprSrc(listNode, ctx);
-		if (listSrc === undefined) return undefined;
 		const paramsSrc =
 			cb.params.length === 0
 				? "_"
@@ -888,22 +1047,7 @@ export function parseJsScript(
 						cb.params[0]!.start,
 						cb.params[cb.params.length - 1]!.end,
 					);
-		const argsNode = body.arguments[0];
-		const argsSrc =
-			argsNode === undefined
-				? "{}"
-				: exprSrc(argsNode as acorn.AnyNode, innerCtx);
-		if (argsSrc === undefined) return undefined;
-		delete step.args;
-		step.each = `(${listSrc}).map((${paramsSrc}) => (${argsSrc}))`;
-		try {
-			parseExpr(step.each);
-		} catch (err) {
-			return issue(cb, err instanceof ExprError ? err.message : String(err));
-		}
-		const bound = sliceBound(listNode);
-		if (bound !== undefined && step.max === undefined) step.max = bound;
-		return step;
+		return fanOutStep(body, id, listNode, paramsSrc, ctx, cb);
 	};
 
 	/**
@@ -1305,112 +1449,27 @@ export function parseJsScript(
 			return issue(left, "loop with one binding: for (const item of list)");
 		}
 		const param = left.declarations[0]!.id;
-		const listSrc = exprSrc(node.right, ctx);
-		if (listSrc === undefined) return;
-		const paramSrc = source.slice(param.start, param.end);
-
-		const reject = (at: acorn.AnyNode): false => {
-			issue(
-				at,
-				"a for..of body is one awaited tool call, optionally behind local consts and an if guard - or spell the fan-out directly: await Promise.all(list.map(item => tool.name({ ... })))",
-			);
-			return false;
-		};
-
-		let renames = new Map(shadowRenames(ctx.renames, [param]) ?? []);
-		const filters: string[] = [];
-		let call: acorn.CallExpression | undefined;
-
-		const walk = (stmts: readonly acorn.Statement[]): boolean => {
-			for (const [index, stmt] of stmts.entries()) {
-				const last = index === stmts.length - 1;
-				if (stmt.type === "EmptyStatement") continue;
-				// Pure locals: inlined wherever the body reads them.
-				if (
-					stmt.type === "VariableDeclaration" &&
-					stmt.declarations.every(
-						(d) => d.init != null && d.init.type !== "AwaitExpression",
-					)
-				) {
-					for (const d of stmt.declarations) {
-						if (d.id.type !== "Identifier") return reject(d.id);
-						const text = exprSrc(d.init as acorn.AnyNode, {
-							...ctx,
-							renames,
-							noHoist: true,
-						});
-						if (text === undefined) return false;
-						renames = new Map(renames);
-						renames.set(d.id.name, `(${text})`);
-					}
-					continue;
-				}
-				// Guards: `if (cond) continue;` skips the item, `if (cond) {
-				// ... }` ending the body keeps only the items that pass.
-				if (stmt.type === "IfStatement" && !stmt.alternate) {
-					const cond = exprSrc(stmt.test, { ...ctx, renames, noHoist: true });
-					if (cond === undefined) return false;
-					const inner =
-						stmt.consequent.type === "BlockStatement"
-							? stmt.consequent.body
-							: [stmt.consequent];
-					if (inner.length === 1 && inner[0]!.type === "ContinueStatement") {
-						filters.push(`!(${cond})`);
-						continue;
-					}
-					if (!last) return reject(stmt);
-					filters.push(cond);
-					return walk(inner);
-				}
-				// The one awaited tool call ends the body.
-				const awaited: acorn.Expression | undefined =
-					stmt.type === "ExpressionStatement" &&
-					stmt.expression.type === "AwaitExpression"
-						? stmt.expression.argument
-						: stmt.type === "VariableDeclaration" &&
-								stmt.declarations.length === 1 &&
-								stmt.declarations[0]!.init?.type === "AwaitExpression"
-							? stmt.declarations[0]!.init.argument
-							: undefined;
-				if (
-					awaited === undefined ||
-					awaited.type !== "CallExpression" ||
-					!last
-				) {
-					return reject(stmt);
-				}
-				call = awaited;
-				return true;
-			}
-			return reject(node);
-		};
-		const body =
-			node.body.type === "BlockStatement" ? node.body.body : [node.body];
-		if (!walk(body) || call === undefined) return;
-
-		const innerCtx: Ctx = { ...ctx, renames, noHoist: true };
-		const step = compileCall(call, mint(), innerCtx);
-		if (step === undefined) return;
-		const argsNode = call.arguments[0];
-		const argsSrc =
-			argsNode === undefined
-				? "{}"
-				: exprSrc(argsNode as acorn.AnyNode, innerCtx);
-		if (argsSrc === undefined) return;
-		delete step.args;
-		const list =
-			filters.length === 0
-				? `(${listSrc})`
-				: `(${listSrc}).filter((${paramSrc}) => ${filters.map((f) => `(${f})`).join(" && ")})`;
-		step.each = `${list}.map((${paramSrc}) => (${argsSrc}))`;
-		try {
-			parseExpr(step.each);
-		} catch (err) {
-			return issue(node, err instanceof ExprError ? err.message : String(err));
-		}
-		const bound = sliceBound(node.right);
-		if (bound !== undefined && step.max === undefined) step.max = bound;
-		pushCall(step, ctx);
+		const body = fanOutBody(
+			node.body.type === "BlockStatement" ? node.body.body : [node.body],
+			[param],
+			ctx,
+			{
+				skip: "continue",
+				at: node,
+				message:
+					"a for..of body is one awaited tool call, optionally behind local consts and an if guard - or spell the fan-out directly: await Promise.all(list.map(item => tool.name({ ... })))",
+			},
+		);
+		if (body === undefined) return;
+		const step = fanOutStep(
+			body,
+			mint(),
+			node.right,
+			source.slice(param.start, param.end),
+			ctx,
+			node,
+		);
+		if (step !== undefined) pushCall(step, ctx);
 	};
 
 	/**

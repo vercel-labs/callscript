@@ -909,6 +909,107 @@ describe("wrappers", () => {
 	});
 });
 
+describe("fan-out arrow bodies", () => {
+	// list.map(async item => { ... }) shares the for..of body grammar:
+	// locals, skip guards (a bare return), a trailing if, one call
+
+	it("a block body with locals, a skip guard, and a returned call", () => {
+		const script = parseJsScript(`
+			const issues = await github.listIssues({ repo: "api" });
+			const closed = await Promise.all(issues.slice(0, 5).map(async i => {
+				const n = i.number;
+				if (!i.stale) return;
+				return await github.closeIssue({ number: n });
+			}));
+		`);
+		expect(script.steps[1]).toEqual({
+			id: "closed",
+			call: "github.closeIssue",
+			each: "(issues.slice(0, 5)).filter((i) => (!(!i.stale))).map((i) => ({ number: (i.number) }))",
+			max: 5,
+		});
+	});
+
+	it("a trailing if around the call; return without await; a bare awaited call", () => {
+		const guarded = parseJsScript(`
+			const results = await Promise.all(issues.map(async (i) => {
+				if (i.stale) {
+					const tag = \`#\${i.number}\`;
+					return slack.post({ text: tag });
+				}
+			}));
+		`);
+		expect((guarded.steps[0] as CallStep).each).toBe(
+			"(issues).filter((i) => (i.stale)).map((i) => ({ text: (`#${i.number}`) }))",
+		);
+		const bare = parseJsScript(`
+			await Promise.all(issues.map(async i => {
+				await github.closeIssue({ number: i.number });
+			}));
+		`);
+		expect((bare.steps[0] as CallStep).each).toBe(
+			"(issues).map((i) => ({ number: i.number }))",
+		);
+	});
+
+	it("runs end to end: only the guarded items dispatch", async () => {
+		const closed: number[] = [];
+		const listIssues = tool({
+			name: "github.listIssues",
+			execute: () => [
+				{ number: 1, stale: true },
+				{ number: 2, stale: false },
+				{ number: 3, stale: true },
+			],
+		});
+		const closeIssue = tool({
+			name: "github.closeIssue",
+			execute: (args: { number: number }) => {
+				closed.push(args.number);
+				return { closed: args.number };
+			},
+		});
+		const engine = callscript({ tools: [listIssues, closeIssue] });
+		const result = await engine.run({
+			script: `
+				const issues = await github.listIssues({});
+				const done = await Promise.all(issues.map(async i => {
+					if (!i.stale) return;
+					return await github.closeIssue({ number: i.number * 10 });
+				}));
+				return done.map(d => d.closed);
+			`,
+		});
+		expect(result.status).toBe("ok");
+		if (result.status === "ok") expect(result.output).toEqual([10, 30]);
+		expect(closed.sort()).toEqual([10, 30]);
+	});
+
+	it("a real arrow body stays rejected, naming the expression form", () => {
+		const message = /fan-out arrow's block is one awaited tool call/;
+		expect(
+			issuesOf(() =>
+				parseJsScript(`
+					await Promise.all(issues.map(async i => {
+						const r = await github.closeIssue({ number: i.number });
+						await slack.post({ text: r.closed });
+					}));
+				`),
+			)[0],
+		).toMatch(message);
+		expect(
+			issuesOf(() =>
+				parseJsScript(`
+					await Promise.all(issues.map(async i => {
+						if (i.stale) return github.closeIssue({ number: i.number });
+						else return slack.post({ text: "kept" });
+					}));
+				`),
+			)[0],
+		).toMatch(message);
+	});
+});
+
 describe("effect ordering", () => {
 	it("sequential awaited calls chain via after; data edges suppress it", () => {
 		const script = parseJsScript(`
