@@ -17,8 +17,9 @@
  * error branch. The spellings models reach for most desugar too, each
  * into steps the author could have written by hand: destructuring
  * (`bindPattern`), awaits nested in expressions (`hoistAwaits`), loop
- * bodies with locals and guards (`compileForOf`), and the `let` +
- * `if` conditional value (`ifAssignDesugar`). What is stored, hashed,
+ * and fan-out-arrow bodies with locals and guards (`fanOutBody`), the
+ * `let` + `if` conditional value (`ifAssignDesugar`), and the async
+ * IIFE / main() wrappers (`unwrapProgram`). What is stored, hashed,
  * validated, and executed is ALWAYS the JSON plan, so nothing about
  * inertness, static checking, bounds, or resumability changes - this
  * file is a frontend, not a runtime.
