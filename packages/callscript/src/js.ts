@@ -14,9 +14,15 @@
  * and the parser desugars statement by statement - `const x = await
  * tool(...)` is a call step, `const x = expr` a let step, `if (c) return v`
  * a guard, `Promise.all(list.map(...))` a bounded fan-out, `try/catch` the
- * error branch. What is stored, hashed, validated, and executed is ALWAYS
- * the JSON plan, so nothing about inertness, static checking, bounds, or
- * resumability changes - this file is a frontend, not a runtime.
+ * error branch. The spellings models reach for most desugar too, each
+ * into steps the author could have written by hand: destructuring
+ * (`bindPattern`), awaits nested in expressions (`hoistAwaits`), loop
+ * and fan-out-arrow bodies with locals and guards (`fanOutBody`), the
+ * `let` + `if` conditional value (`ifAssignDesugar`), and the async
+ * IIFE / main() wrappers (`unwrapProgram`). What is stored, hashed,
+ * validated, and executed is ALWAYS the JSON plan, so nothing about
+ * inertness, static checking, bounds, or resumability changes - this
+ * file is a frontend, not a runtime.
  *
  * Anything outside the recognized grammar is rejected with the message
  * that names the callscript spelling, so the up-front instruction stays
@@ -66,6 +72,10 @@ type Ctx = {
 	/** True only for the program's own statement list - where a trailing
 	 * `return` is the script's `output` rather than a guard step. */
 	topLevel: boolean;
+	/** Inside a fan-out's own arrow/body: a nested await cannot be hoisted
+	 * out (the step would read the per-element binding), so it is rejected
+	 * with the bind-first fix instead. */
+	noHoist?: boolean;
 };
 
 /**
@@ -150,7 +160,80 @@ export function parseJsScript(
 			}
 		}
 	};
-	scanNames(program.body);
+	/**
+	 * WRAPPERS: `(async () => { ... })()` - awaited or not - and `async
+	 * function main() { ... }` followed by `main()` are how a model wraps
+	 * top-level await when it pictures a real module. The body IS the
+	 * script, so it compiles as the program: its trailing `return` is the
+	 * output, a leading comment the intent. A `.catch`/`.then` on the
+	 * wrapper is rejected with the reason - a failed call already fails
+	 * the run.
+	 */
+	type TopLevel = acorn.Statement | acorn.ModuleDeclaration;
+	const unwrapProgram = (stmts: readonly TopLevel[]): readonly TopLevel[] => {
+		/** The zero-argument call a statement makes, awaited or not. */
+		const callOf = (
+			stmt: TopLevel | undefined,
+		): acorn.CallExpression | undefined => {
+			if (stmt?.type !== "ExpressionStatement") return undefined;
+			let expr: acorn.Expression = stmt.expression;
+			if (expr.type === "AwaitExpression") expr = expr.argument;
+			return expr.type === "CallExpression" && expr.arguments.length === 0
+				? expr
+				: undefined;
+		};
+		const isWrapperFn = (
+			node: acorn.Expression | acorn.Super,
+		): node is acorn.ArrowFunctionExpression | acorn.FunctionExpression =>
+			(node.type === "ArrowFunctionExpression" ||
+				node.type === "FunctionExpression") &&
+			node.params.length === 0 &&
+			node.body.type === "BlockStatement";
+		if (stmts.length === 1) {
+			const call = callOf(stmts[0]);
+			if (call !== undefined && isWrapperFn(call.callee)) {
+				return (call.callee.body as acorn.BlockStatement).body;
+			}
+			// (async () => { ... })().catch(...) - the chained call is the tell
+			const stmt = stmts[0]!;
+			const expr =
+				stmt.type === "ExpressionStatement"
+					? stmt.expression.type === "AwaitExpression"
+						? stmt.expression.argument
+						: stmt.expression
+					: undefined;
+			if (
+				expr?.type === "CallExpression" &&
+				expr.callee.type === "MemberExpression" &&
+				expr.callee.object.type === "CallExpression" &&
+				isWrapperFn(expr.callee.object.callee)
+			) {
+				issue(
+					expr.callee.property,
+					"drop the .then/.catch on the wrapper - a failed call already fails the run, and the wrapper's return is the output",
+				);
+			}
+		}
+		if (
+			stmts.length === 2 &&
+			stmts[0]!.type === "FunctionDeclaration" &&
+			stmts[0]!.params.length === 0
+		) {
+			const fn = stmts[0] as acorn.FunctionDeclaration;
+			const name = fn.id?.name;
+			const call = callOf(stmts[1]);
+			if (call?.callee.type === "Identifier" && call.callee.name === name) {
+				return fn.body.body;
+			}
+			issue(
+				stmts[1]!,
+				`call the wrapper plainly as the last statement - ${name}() or await ${name}() - or drop it and write the statements at top level`,
+			);
+		}
+		return stmts;
+	};
+	const programBody = unwrapProgram(program.body);
+	scanNames(programBody);
 	let mintCounter = 0;
 	const mint = (): string => {
 		let id: string;
@@ -199,18 +282,115 @@ export function parseJsScript(
 		return false;
 	};
 
-	/** Slice a node as an expression string: renames applied, grammar
-	 * checked (the checker's messages teach the pure-JS subset). */
-	const exprSrc = (node: acorn.AnyNode, ctx: Ctx): string | undefined => {
-		if (containsAwait(node)) {
+	/**
+	 * HOISTING: an awaited tool call nested in an expression - `return {
+	 * issues: await repo.list({}) }`, `tool({ id: (await other({})).id })`
+	 * - compiles into its own call step first, and the expression reads
+	 * the step where the await stood: exactly what the author gets by
+	 * binding it, so the plan is the same one. Statement order holds -
+	 * hoisted calls join the effect frontier like any awaited call, in
+	 * source order. Not hoistable: an await inside an arrow (a closure
+	 * runs per element - that is the fan-out's job) and any await inside
+	 * a fan-out's own arguments (`noHoist`). Returns the expression text
+	 * with every hoisted span replaced by its step id.
+	 */
+	const hoistAwaits = (node: acorn.AnyNode, ctx: Ctx): string | undefined => {
+		const awaits: acorn.AwaitExpression[] = [];
+		const collect = (n: unknown): void => {
+			if (n === null || typeof n !== "object") return;
+			const v = n as Record<string, unknown> & { type?: string };
+			if (
+				v.type === "ArrowFunctionExpression" ||
+				v.type === "FunctionExpression"
+			) {
+				return;
+			}
+			if (v.type === "AwaitExpression") {
+				// outermost only - an await inside this call's own arguments
+				// hoists when the call compiles its args
+				awaits.push(n as acorn.AwaitExpression);
+				return;
+			}
+			for (const [key, value] of Object.entries(v)) {
+				if (key === "loc") continue;
+				if (Array.isArray(value)) value.forEach(collect);
+				else if (
+					value !== null &&
+					typeof value === "object" &&
+					typeof (value as { type?: unknown }).type === "string"
+				) {
+					collect(value);
+				}
+			}
+		};
+		collect(node);
+		awaits.sort((a, b) => a.start - b.start);
+		if (ctx.noHoist) {
 			return issue(
 				node,
-				"await belongs on its own statement - bind it first (const x = await tool.name({ ... })), then derive from x",
+				"a fan-out's arguments cannot await - compute the value before the fan-out (const x = await tool.name({ ... })), then read x",
 			);
 		}
+		if (awaits.length === 0) {
+			return issue(
+				node,
+				"await inside an arrow cannot run - fan out instead: await Promise.all(list.map(item => tool.name({ ... })))",
+			);
+		}
+		const edits: { start: number; end: number; text: string }[] = [];
+		for (const a of awaits) {
+			const arg = a.argument;
+			const callee =
+				arg.type === "CallExpression" ? dottedName(arg.callee) : undefined;
+			if (callee === "Promise.all") {
+				return issue(
+					a,
+					"bind a fan-out first: const results = await Promise.all(...), then read results",
+				);
+			}
+			if (arg.type !== "CallExpression" || callee === undefined) {
+				return issue(
+					a,
+					"await belongs directly on a tool call - bind it first (const x = await tool.name({ ... })), then derive from x",
+				);
+			}
+			const step = compileCall(arg, mint(), ctx);
+			if (step === undefined) return undefined;
+			pushCall(step, ctx);
+			edits.push({ start: a.start, end: a.end, text: step.id });
+		}
 		let text = source.slice(node.start, node.end);
+		for (const e of edits.sort((x, y) => y.start - x.start)) {
+			text =
+				text.slice(0, e.start - node.start) +
+				e.text +
+				text.slice(e.end - node.start);
+		}
 		if (ctx.renames !== undefined && ctx.renames.size > 0) {
-			text = renameIdentifiers(text, node, node.start, ctx.renames);
+			// the spans are gone, so rename against a fresh parse of the text
+			const reparsed = acorn.parseExpressionAt(text, 0, {
+				ecmaVersion: 2022,
+				sourceType: "script",
+			});
+			text = renameIdentifiers(text, reparsed as acorn.AnyNode, 0, ctx.renames);
+		}
+		return text;
+	};
+
+	/** Slice a node as an expression string: nested awaits hoisted,
+	 * renames applied, grammar checked (the checker's messages teach the
+	 * pure-JS subset). */
+	const exprSrc = (node: acorn.AnyNode, ctx: Ctx): string | undefined => {
+		let text: string;
+		if (containsAwait(node)) {
+			const hoisted = hoistAwaits(node, ctx);
+			if (hoisted === undefined) return undefined;
+			text = hoisted;
+		} else {
+			text = source.slice(node.start, node.end);
+			if (ctx.renames !== undefined && ctx.renames.size > 0) {
+				text = renameIdentifiers(text, node, node.start, ctx.renames);
+			}
 		}
 		try {
 			parseExpr(text);
@@ -232,6 +412,119 @@ export function parseJsScript(
 		const bound = new Set(params.flatMap((p) => patternNames(p)));
 		const out = new Map([...renames].filter(([name]) => !bound.has(name)));
 		return out;
+	};
+
+	/* ----------------------------- destructuring --------------------------- */
+
+	/** `src.key`, or `src["odd key"]` when the key is not an identifier. */
+	const memberSrc = (src: string, key: string): string =>
+		/^[A-Za-z_$][\w$]*$/.test(key)
+			? `${src}.${key}`
+			: `${src}[${JSON.stringify(key)}]`;
+
+	/** A pattern property's static key; undefined when computed. */
+	const propertyKey = (prop: acorn.AssignmentProperty): string | undefined => {
+		if (prop.computed) return undefined;
+		if (prop.key.type === "Identifier") return prop.key.name;
+		if (
+			prop.key.type === "Literal" &&
+			(typeof prop.key.value === "string" || typeof prop.key.value === "number")
+		) {
+			return String(prop.key.value);
+		}
+		return undefined;
+	};
+
+	/** A derivation the desugar generated: grammar-checked (a forbidden
+	 * key like `constructor` surfaces here, at the pattern's line). */
+	const pushLet = (
+		node: acorn.AnyNode,
+		id: string,
+		text: string,
+		ctx: Ctx,
+	): void => {
+		try {
+			parseExpr(text);
+		} catch (err) {
+			issue(node, err instanceof ExprError ? err.message : String(err));
+			return;
+		}
+		pushStep({ id, let: text }, ctx);
+	};
+
+	/**
+	 * DESTRUCTURING: `const { items, total = 0 } = x` and `const [head,
+	 * ...tail] = xs` desugar into one `let` step per bound name - a field
+	 * read off the source (`items = x.items`), which is exactly the
+	 * "bind to one name and read fields off it" spelling the plan already
+	 * has. `src` is always a cheap path off a step id, so a default may
+	 * repeat it (`x.total === undefined ? 0 : x.total`); a nested pattern
+	 * under a default reads from one minted id instead. Object rest keeps
+	 * every key the pattern did not name. Nothing here changes the plan
+	 * format: the steps are the ones the author could have written.
+	 */
+	const bindPattern = (pattern: acorn.Pattern, src: string, ctx: Ctx): void => {
+		switch (pattern.type) {
+			case "Identifier":
+				pushLet(pattern, pattern.name, src, ctx);
+				return;
+			case "AssignmentPattern": {
+				const fallback = exprSrc(pattern.right as acorn.AnyNode, ctx);
+				if (fallback === undefined) return;
+				const value = `${src} === undefined ? (${fallback}) : ${src}`;
+				if (pattern.left.type === "Identifier") {
+					pushLet(pattern, pattern.left.name, value, ctx);
+					return;
+				}
+				const id = mint();
+				pushLet(pattern, id, value, ctx);
+				bindPattern(pattern.left, id, ctx);
+				return;
+			}
+			case "ObjectPattern": {
+				const named: string[] = [];
+				for (const prop of pattern.properties) {
+					if (prop.type === "RestElement") {
+						const keep =
+							named.length === 0
+								? "true"
+								: named
+										.map((k) => `e[0] !== ${JSON.stringify(k)}`)
+										.join(" && ");
+						bindPattern(
+							prop.argument,
+							`Object.fromEntries(Object.entries(${src}).filter(e => ${keep}))`,
+							ctx,
+						);
+						continue;
+					}
+					const key = propertyKey(prop);
+					if (key === undefined) {
+						issue(
+							prop,
+							"destructure with plain keys - a computed key ([k]) is not a static binding",
+						);
+						continue;
+					}
+					named.push(key);
+					bindPattern(prop.value as acorn.Pattern, memberSrc(src, key), ctx);
+				}
+				return;
+			}
+			case "ArrayPattern": {
+				pattern.elements.forEach((el, index) => {
+					if (el === null) return; // a hole skips the element
+					if (el.type === "RestElement") {
+						bindPattern(el.argument, `${src}.slice(${index})`, ctx);
+						return;
+					}
+					bindPattern(el, `${src}[${index}]`, ctx);
+				});
+				return;
+			}
+			default:
+				issue(pattern, `unsupported binding pattern (${pattern.type})`);
+		}
 	};
 
 	/* ----------------------------- args & opts ----------------------------- */
@@ -552,8 +845,166 @@ export function parseJsScript(
 		return undefined;
 	};
 
+	/** What a fan-out body compiled to: the one call, the guards it sits
+	 * behind, and the local renames in force where it reads. */
+	type FanOutBody = {
+		call: acorn.CallExpression;
+		filters: string[];
+		renames: Map<string, string>;
+	};
+
+	/**
+	 * A fan-out BODY - the block of a `for..of`, or of a `list.map(async
+	 * item => { ... })` arrow - may carry what a map arrow can express:
+	 * pure locals (inlined into the call as renames - `const n =
+	 * i.number` becomes `(i.number)`), skip guards (`if (cond) continue;`
+	 * in a loop, `if (cond) return;` in an arrow), a trailing `if (cond)
+	 * { ... }` around the call, and exactly one awaited tool call: bound,
+	 * bare, or (in an arrow) returned. A second call, an else, or other
+	 * work is a real body, and `shape.message` names the fan-out spelling.
+	 */
+	const fanOutBody = (
+		stmts: readonly acorn.Statement[],
+		params: readonly acorn.Pattern[],
+		ctx: Ctx,
+		shape: { skip: "continue" | "return"; message: string; at: acorn.AnyNode },
+	): FanOutBody | undefined => {
+		const reject = (at: acorn.AnyNode): false => {
+			issue(at, shape.message);
+			return false;
+		};
+		const isSkip = (s: acorn.Statement): boolean =>
+			shape.skip === "continue"
+				? s.type === "ContinueStatement"
+				: s.type === "ReturnStatement" && s.argument == null;
+		/** The awaited call a statement makes, in the forms the body allows. */
+		const callIn = (s: acorn.Statement): acorn.Expression | undefined => {
+			if (s.type === "ExpressionStatement") {
+				return s.expression.type === "AwaitExpression"
+					? s.expression.argument
+					: undefined;
+			}
+			if (s.type === "VariableDeclaration") {
+				const init =
+					s.declarations.length === 1 ? s.declarations[0]!.init : null;
+				return init?.type === "AwaitExpression" ? init.argument : undefined;
+			}
+			if (
+				shape.skip === "return" &&
+				s.type === "ReturnStatement" &&
+				s.argument
+			) {
+				return s.argument.type === "AwaitExpression"
+					? s.argument.argument
+					: s.argument;
+			}
+			return undefined;
+		};
+		let renames = new Map(shadowRenames(ctx.renames, params) ?? []);
+		const filters: string[] = [];
+		let call: acorn.CallExpression | undefined;
+
+		const walk = (body: readonly acorn.Statement[]): boolean => {
+			for (const [index, stmt] of body.entries()) {
+				const last = index === body.length - 1;
+				if (stmt.type === "EmptyStatement") continue;
+				// Pure locals: inlined wherever the body reads them.
+				if (
+					stmt.type === "VariableDeclaration" &&
+					stmt.declarations.every(
+						(d) => d.init != null && d.init.type !== "AwaitExpression",
+					)
+				) {
+					for (const d of stmt.declarations) {
+						if (d.id.type !== "Identifier") return reject(d.id);
+						const text = exprSrc(d.init as acorn.AnyNode, {
+							...ctx,
+							renames,
+							noHoist: true,
+						});
+						if (text === undefined) return false;
+						renames = new Map(renames);
+						renames.set(d.id.name, `(${text})`);
+					}
+					continue;
+				}
+				// Guards: a skip drops the item, a trailing `if (cond) { ... }`
+				// keeps only the items that pass.
+				if (stmt.type === "IfStatement" && !stmt.alternate) {
+					const cond = exprSrc(stmt.test, { ...ctx, renames, noHoist: true });
+					if (cond === undefined) return false;
+					const inner =
+						stmt.consequent.type === "BlockStatement"
+							? stmt.consequent.body
+							: [stmt.consequent];
+					if (inner.length === 1 && isSkip(inner[0]!)) {
+						filters.push(`!(${cond})`);
+						continue;
+					}
+					if (!last) return reject(stmt);
+					filters.push(cond);
+					return walk(inner);
+				}
+				// The one awaited tool call ends the body.
+				const awaited = callIn(stmt);
+				if (
+					awaited === undefined ||
+					awaited.type !== "CallExpression" ||
+					!last
+				) {
+					return reject(stmt);
+				}
+				call = awaited;
+				return true;
+			}
+			return reject(shape.at);
+		};
+		if (!walk(stmts) || call === undefined) return undefined;
+		return { call, filters, renames };
+	};
+
+	/** The `each` step for a fan-out: the call compiled under the body's
+	 * renames, its args re-read per element, the guards as a `.filter`
+	 * on the list - which only shrinks it, so a slice bound still caps
+	 * the fan-out. */
+	const fanOutStep = (
+		body: FanOutBody,
+		id: string,
+		listNode: acorn.AnyNode,
+		paramSrc: string,
+		ctx: Ctx,
+		at: acorn.AnyNode,
+	): CallStep | undefined => {
+		const innerCtx: Ctx = { ...ctx, renames: body.renames, noHoist: true };
+		const step = compileCall(body.call, id, innerCtx);
+		if (step === undefined) return undefined;
+		const listSrc = exprSrc(listNode, ctx);
+		if (listSrc === undefined) return undefined;
+		const argsNode = body.call.arguments[0];
+		const argsSrc =
+			argsNode === undefined
+				? "{}"
+				: exprSrc(argsNode as acorn.AnyNode, innerCtx);
+		if (argsSrc === undefined) return undefined;
+		delete step.args;
+		const list =
+			body.filters.length === 0
+				? `(${listSrc})`
+				: `(${listSrc}).filter((${paramSrc}) => ${body.filters.map((f) => `(${f})`).join(" && ")})`;
+		step.each = `${list}.map((${paramSrc}) => (${argsSrc}))`;
+		try {
+			parseExpr(step.each);
+		} catch (err) {
+			return issue(at, err instanceof ExprError ? err.message : String(err));
+		}
+		const bound = sliceBound(listNode);
+		if (bound !== undefined && step.max === undefined) step.max = bound;
+		return step;
+	};
+
 	/** `await Promise.all(list.map(i => tool.name(args)))` -> an `each`
-	 * fan-out step. The body may be `async i => await tool(...)` too. */
+	 * fan-out step. The arrow may be `async i => await tool(...)`, or
+	 * carry a block body in the fan-out-body grammar. */
 	const compileFanOut = (
 		listNode: acorn.AnyNode,
 		cb: acorn.AnyNode,
@@ -566,28 +1017,30 @@ export function parseJsScript(
 				"fan out with an arrow: Promise.all(list.map(item => tool.name({ ... })))",
 			);
 		}
-		let body: acorn.AnyNode = cb.body as acorn.AnyNode;
-		if (body.type === "BlockStatement") {
-			return issue(
-				cb,
-				"the fan-out arrow must be a single call - list.map(item => tool.name({ ... })), no block body",
-			);
+		let body: FanOutBody | undefined;
+		if (cb.body.type === "BlockStatement") {
+			body = fanOutBody(cb.body.body, cb.params, ctx, {
+				skip: "return",
+				at: cb,
+				message:
+					"a fan-out arrow's block is one awaited tool call, optionally behind local consts and an if guard - or make it the expression: list.map(item => tool.name({ ... }))",
+			});
+			if (body === undefined) return undefined;
+		} else {
+			let expr: acorn.AnyNode = cb.body as acorn.AnyNode;
+			if (expr.type === "AwaitExpression") expr = expr.argument;
+			if (expr.type !== "CallExpression") {
+				return issue(
+					cb,
+					"the fan-out arrow must BE the tool call - compute the list first (const items = ...), then map each item to one call",
+				);
+			}
+			body = {
+				call: expr,
+				filters: [],
+				renames: new Map(shadowRenames(ctx.renames, cb.params) ?? []),
+			};
 		}
-		if (body.type === "AwaitExpression") body = body.argument;
-		if (body.type !== "CallExpression") {
-			return issue(
-				cb,
-				"the fan-out arrow must BE the tool call - compute the list first (const items = ...), then map each item to one call",
-			);
-		}
-		const innerCtx: Ctx = {
-			...ctx,
-			renames: shadowRenames(ctx.renames, cb.params),
-		};
-		const step = compileCall(body, id, innerCtx);
-		if (step === undefined) return undefined;
-		const listSrc = exprSrc(listNode, ctx);
-		if (listSrc === undefined) return undefined;
 		const paramsSrc =
 			cb.params.length === 0
 				? "_"
@@ -595,22 +1048,7 @@ export function parseJsScript(
 						cb.params[0]!.start,
 						cb.params[cb.params.length - 1]!.end,
 					);
-		const argsNode = body.arguments[0];
-		const argsSrc =
-			argsNode === undefined
-				? "{}"
-				: exprSrc(argsNode as acorn.AnyNode, innerCtx);
-		if (argsSrc === undefined) return undefined;
-		delete step.args;
-		step.each = `(${listSrc}).map((${paramsSrc}) => (${argsSrc}))`;
-		try {
-			parseExpr(step.each);
-		} catch (err) {
-			return issue(cb, err instanceof ExprError ? err.message : String(err));
-		}
-		const bound = sliceBound(listNode);
-		if (bound !== undefined && step.max === undefined) step.max = bound;
-		return step;
+		return fanOutStep(body, id, listNode, paramsSrc, ctx, cb);
 	};
 
 	/**
@@ -686,34 +1124,25 @@ export function parseJsScript(
 						"one tool call per try - give each risky call its own try/catch",
 					);
 				}
-				const names: (string | undefined)[] =
-					binding === undefined
-						? inner.elements.map(() => undefined)
-						: binding.type === "ArrayPattern"
-							? binding.elements.map((el) =>
-									el === null
-										? undefined
-										: el.type === "Identifier"
-											? el.name
-											: undefined,
-								)
-							: [];
-				if (binding !== undefined && binding.type === "ArrayPattern") {
-					if (binding.elements.length !== inner.elements.length) {
-						return issue(
-							binding,
-							"destructure one name per call: const [a, b] = await Promise.all([...])",
-						);
-					}
-					if (
-						binding.elements.some(
-							(el) => el !== null && el.type !== "Identifier",
-						)
-					) {
-						return issue(binding, "plain names only in the destructuring");
-					}
+				// `const [a, b] = ...` names the calls; a nested pattern in an
+				// element (`[{ closed }, b]`) reads off its own minted call.
+				const elements =
+					binding?.type === "ArrayPattern" ? binding.elements : undefined;
+				if (
+					elements !== undefined &&
+					elements.length !== inner.elements.length
+				) {
+					return issue(
+						binding!,
+						"destructure one name per call: const [a, b] = await Promise.all([...])",
+					);
 				}
+				const names: (string | undefined)[] = inner.elements.map((_, i) => {
+					const el = elements?.[i];
+					return el && el.type === "Identifier" ? el.name : undefined;
+				});
 				const compiled: CallStep[] = [];
+				const byIndex: (CallStep | undefined)[] = [];
 				for (const [index, el] of inner.elements.entries()) {
 					if (!el || el.type === "SpreadElement") {
 						issue(inner, "Promise.all takes plain tool calls, no holes/spread");
@@ -729,6 +1158,7 @@ export function parseJsScript(
 						continue;
 					}
 					const step = compileCall(callNode, names[index] ?? mint(), ctx);
+					byIndex[index] = step;
 					if (step !== undefined) compiled.push(step);
 				}
 				// All elements chain after the SAME prior frontier, then the
@@ -742,15 +1172,33 @@ export function parseJsScript(
 					if (step.await !== false) nextFrontier.push(step.id);
 				}
 				frontier = nextFrontier.length > 0 ? nextFrontier : before;
-				// An Identifier binding gets the tuple as a value.
-				if (binding !== undefined && binding.type === "Identifier") {
-					pushStep(
-						{
-							id: binding.name,
-							let: `[${compiled.map((s) => s.id).join(", ")}]`,
-						},
-						ctx,
-					);
+				if (elements !== undefined) {
+					// Nested patterns in the tuple read off their own call step.
+					elements.forEach((el, index) => {
+						const step = byIndex[index];
+						if (el === null || el.type === "Identifier" || step === undefined) {
+							return;
+						}
+						if (el.type === "RestElement") {
+							issue(
+								el,
+								"destructure one name per call: const [a, b] = await Promise.all([...])",
+							);
+							return;
+						}
+						bindPattern(el, step.id, ctx);
+					});
+				} else if (binding !== undefined) {
+					// Any other binding gets the tuple as a value - a name
+					// directly, a pattern through a minted tuple step.
+					const tuple = `[${compiled.map((s) => s.id).join(", ")}]`;
+					if (binding.type === "Identifier") {
+						pushStep({ id: binding.name, let: tuple }, ctx);
+					} else {
+						const id = mint();
+						pushStep({ id, let: tuple }, ctx);
+						bindPattern(binding, id, ctx);
+					}
 				}
 				return undefined;
 			}
@@ -760,16 +1208,23 @@ export function parseJsScript(
 			);
 		}
 
-		// Plain awaited tool call.
-		if (binding !== undefined && bindingName === undefined) {
-			return issue(
-				binding,
-				"destructuring a call result is not supported - bind it to one name and read fields off it",
-			);
-		}
+		// Plain awaited tool call. A destructured binding reads its fields
+		// off the call step: `const { items } = await t()` is the call under
+		// a minted id plus `items = <id>.items` - inside a try, only when
+		// the call succeeded (the catch branch owns the failure).
 		const step = compileCall(arg, bindingName ?? mint(), ctx);
 		if (step === undefined) return undefined;
-		return pushCall(step, ctx);
+		pushCall(step, ctx);
+		if (binding !== undefined && bindingName === undefined) {
+			bindPattern(
+				binding,
+				step.id,
+				where === "try"
+					? { ...ctx, cond: composeCond(ctx.cond, `!($errors.${step.id})`) }
+					: ctx,
+			);
+		}
+		return step;
 	};
 
 	/* ------------------------------ statements ----------------------------- */
@@ -784,17 +1239,17 @@ export function parseJsScript(
 				compileAwaited(decl.init, decl.id, ctx, "statement");
 				continue;
 			}
-			if (decl.id.type !== "Identifier") {
-				issue(
-					decl.id,
-					"bind derived values to one name - destructure by deriving fields in later consts",
-				);
-				continue;
-			}
 			// Un-awaited call to a MOUNTED tool -> detached (fire-and-forget).
 			if (decl.init.type === "CallExpression") {
 				const name = dottedName(decl.init.callee);
 				if (name !== undefined && isMountedTool(name)) {
+					if (decl.id.type !== "Identifier") {
+						issue(
+							decl.id,
+							"bind a detached call to one name - const job = tool.name({ ... }); a later script joins it with await job",
+						);
+						continue;
+					}
 					const step = compileCall(decl.init, decl.id.name, ctx);
 					if (step !== undefined) {
 						step.await = false;
@@ -805,6 +1260,17 @@ export function parseJsScript(
 			}
 			const text = exprSrc(decl.init, ctx);
 			if (text === undefined) continue;
+			if (decl.id.type !== "Identifier") {
+				// Destructuring a pure value: read the fields straight off a
+				// name/path source; anything else is derived once first.
+				let src = text;
+				if (dottedName(decl.init) === undefined) {
+					src = mint();
+					pushStep({ id: src, let: text }, ctx);
+				}
+				bindPattern(decl.id, src, ctx);
+				continue;
+			}
 			pushStep({ id: decl.id.name, let: text }, ctx);
 		}
 	};
@@ -965,6 +1431,16 @@ export function parseJsScript(
 		}
 	};
 
+	/**
+	 * `for (const item of list) { ... }` fans out exactly like
+	 * `Promise.all(list.map(...))`, so the body may carry what a map arrow
+	 * can express: pure local consts (inlined into the call - `const n =
+	 * i.number` is a rename to `(i.number)`), `if (cond) continue` and
+	 * `if (cond) { ... }` guards around the call (a `.filter` on the
+	 * list), and exactly one awaited tool call, bound or bare. A second
+	 * call, an else branch, a return: that is a real loop body, and the
+	 * message names the fan-out spelling.
+	 */
 	const compileForOf = (node: acorn.ForOfStatement, ctx: Ctx) => {
 		if (node.await) {
 			issue(node, "for await is not needed - a plain for..of fans out");
@@ -974,43 +1450,92 @@ export function parseJsScript(
 			return issue(left, "loop with one binding: for (const item of list)");
 		}
 		const param = left.declarations[0]!.id;
-		const body: acorn.Statement | undefined =
-			node.body.type === "BlockStatement"
-				? node.body.body.length === 1
-					? node.body.body[0]
-					: undefined
-				: node.body;
-		if (
-			body === undefined ||
-			body.type !== "ExpressionStatement" ||
-			body.expression.type !== "AwaitExpression" ||
-			body.expression.argument.type !== "CallExpression"
-		) {
-			return issue(
-				node,
-				"a for..of body must be exactly one awaited tool call - or spell the fan-out directly: await Promise.all(list.map(item => tool.name({ ... })))",
-			);
-		}
-		const innerCtx: Ctx = {
-			...ctx,
-			renames: shadowRenames(ctx.renames, [param]),
+		const body = fanOutBody(
+			node.body.type === "BlockStatement" ? node.body.body : [node.body],
+			[param],
+			ctx,
+			{
+				skip: "continue",
+				at: node,
+				message:
+					"a for..of body is one awaited tool call, optionally behind local consts and an if guard - or spell the fan-out directly: await Promise.all(list.map(item => tool.name({ ... })))",
+			},
+		);
+		if (body === undefined) return;
+		const step = fanOutStep(
+			body,
+			mint(),
+			node.right,
+			source.slice(param.start, param.end),
+			ctx,
+			node,
+		);
+		if (step !== undefined) pushCall(step, ctx);
+	};
+
+	/**
+	 * The dominant model idiom for a conditional value:
+	 *
+	 *   let label = "none";                       // or  let label;
+	 *   if (issues.length > 0) label = "some";    // optionally: else label = "other";
+	 *
+	 * is one derivation, `label = cond ? "some" : "none"`, so desugar it
+	 * to that single-assignment let. Deliberately narrow: a non-const
+	 * binding with a pure (or missing) initializer, followed by an `if`
+	 * whose branches are exactly one assignment to that name each, and
+	 * no await anywhere in it - a call in a branch would hoist out
+	 * unconditionally, so it keeps the reassignment message instead.
+	 * Returns true when the pair was consumed.
+	 */
+	const ifAssignDesugar = (
+		decl: acorn.VariableDeclaration,
+		next: acorn.AnyNode | undefined,
+		ctx: Ctx,
+	): boolean => {
+		if (decl.kind === "const" || decl.declarations.length !== 1) return false;
+		const d = decl.declarations[0]!;
+		if (d.id.type !== "Identifier") return false;
+		const name = d.id.name;
+		if (next?.type !== "IfStatement" || containsAwait(next)) return false;
+		if (d.init != null && containsAwait(d.init)) return false;
+		/** The one `name = expr` a branch holds, else undefined. */
+		const assigned = (
+			branch: acorn.Statement,
+		): acorn.Expression | undefined => {
+			const stmt =
+				branch.type === "BlockStatement"
+					? branch.body.length === 1
+						? branch.body[0]
+						: undefined
+					: branch;
+			if (
+				stmt?.type !== "ExpressionStatement" ||
+				stmt.expression.type !== "AssignmentExpression" ||
+				stmt.expression.operator !== "=" ||
+				stmt.expression.left.type !== "Identifier" ||
+				stmt.expression.left.name !== name
+			) {
+				return undefined;
+			}
+			return stmt.expression.right;
 		};
-		const step = compileCall(body.expression.argument, mint(), innerCtx);
-		if (step === undefined) return;
-		const listSrc = exprSrc(node.right, ctx);
-		if (listSrc === undefined) return;
-		const paramSrc = source.slice(param.start, param.end);
-		const argsNode = body.expression.argument.arguments[0];
-		const argsSrc =
-			argsNode === undefined
-				? "{}"
-				: exprSrc(argsNode as acorn.AnyNode, innerCtx);
-		if (argsSrc === undefined) return;
-		delete step.args;
-		step.each = `(${listSrc}).map((${paramSrc}) => (${argsSrc}))`;
-		const bound = sliceBound(node.right);
-		if (bound !== undefined && step.max === undefined) step.max = bound;
-		pushCall(step, ctx);
+		const whenTrue = assigned(next.consequent);
+		if (whenTrue === undefined) return false;
+		const whenFalse =
+			next.alternate == null ? undefined : assigned(next.alternate);
+		if (next.alternate != null && whenFalse === undefined) return false;
+
+		const cond = exprSrc(next.test, ctx);
+		const a = exprSrc(whenTrue, ctx);
+		const b =
+			whenFalse !== undefined
+				? exprSrc(whenFalse, ctx)
+				: d.init != null
+					? exprSrc(d.init, ctx)
+					: "undefined";
+		if (cond === undefined || a === undefined || b === undefined) return true;
+		pushStep({ id: name, let: `(${cond}) ? (${a}) : (${b})` }, ctx);
+		return true;
 	};
 
 	/**
@@ -1095,6 +1620,10 @@ export function parseJsScript(
 						index++;
 						continue;
 					}
+					if (ifAssignDesugar(stmt, stmts[index + 1], ctx)) {
+						index++;
+						continue;
+					}
 					compileDeclaration(stmt, ctx);
 					continue;
 				}
@@ -1120,6 +1649,27 @@ export function parseJsScript(
 								step.await = false;
 								pushCall(step, ctx);
 							}
+							continue;
+						}
+						// The two bare calls models write most: name the callscript
+						// spelling for each, not just the rule.
+						if (
+							expr.callee.type === "MemberExpression" &&
+							!expr.callee.computed &&
+							expr.callee.property.type === "Identifier" &&
+							expr.callee.property.name === "forEach"
+						) {
+							issue(
+								stmt,
+								"forEach cannot fan out - spell it: await Promise.all(list.map(item => tool.name({ ... })))",
+							);
+							continue;
+						}
+						if (name !== undefined && name.startsWith("console.")) {
+							issue(
+								stmt,
+								`${name} has nowhere to print - return the value instead (return { ... }); every step's output is already recorded`,
+							);
 							continue;
 						}
 						issue(
@@ -1190,7 +1740,7 @@ export function parseJsScript(
 
 	/* -------------------------------- program ------------------------------ */
 
-	const body = [...program.body];
+	const body = [...programBody];
 	// Intent: the leading comment's first line, or a leading string directive.
 	let intent: string | undefined;
 	const firstStart = body[0]?.start ?? source.length;

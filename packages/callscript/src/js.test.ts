@@ -304,6 +304,712 @@ describe("statement forms", () => {
 	});
 });
 
+describe("destructuring", () => {
+	// the dominant model spelling for "read fields off a result": every
+	// pattern desugars into the let steps the author could have written,
+	// so the plan format, validation, and reconciliation see nothing new
+
+	it("an object pattern on a call result reads fields off the minted call step", () => {
+		const script = parseJsScript(`
+			const { items, total } = await github.listIssues({ repo: "api" });
+			return { n: items.length, total };
+		`);
+		expect(script.steps).toEqual([
+			{ id: "s1", call: "github.listIssues", args: { repo: "api" } },
+			{ id: "items", let: "s1.items" },
+			{ id: "total", let: "s1.total" },
+		]);
+		expect(script.output).toBe("{ n: items.length, total }");
+	});
+
+	it("renames, defaults, nesting, string keys, and object rest", () => {
+		const script = parseJsScript(`
+			const res = await github.listIssues({ repo: "api" });
+			const { items: list = [], meta: { page = 1 }, "x-total": total, ...rest } = res;
+		`);
+		expect(script.steps.slice(1)).toEqual([
+			{ id: "list", let: "res.items === undefined ? ([]) : res.items" },
+			{ id: "page", let: "res.meta.page === undefined ? (1) : res.meta.page" },
+			{ id: "total", let: 'res["x-total"]' },
+			{
+				id: "rest",
+				let: 'Object.fromEntries(Object.entries(res).filter(e => e[0] !== "items" && e[0] !== "meta" && e[0] !== "x-total"))',
+			},
+		]);
+	});
+
+	it("array patterns: index reads, holes skip, rest slices", () => {
+		const script = parseJsScript(`
+			const issues = await github.listIssues({ repo: "api" });
+			const [first, , third, ...others] = issues;
+		`);
+		expect(script.steps.slice(1)).toEqual([
+			{ id: "first", let: "issues[0]" },
+			{ id: "third", let: "issues[2]" },
+			{ id: "others", let: "issues.slice(3)" },
+		]);
+	});
+
+	it("a nested pattern under a default reads from one minted id", () => {
+		const script = parseJsScript(`
+			const res = await github.listIssues({ repo: "api" });
+			const { meta: { page } = { page: 0 } } = res;
+		`);
+		expect(script.steps.slice(1)).toEqual([
+			{ id: "s1", let: "res.meta === undefined ? ({ page: 0 }) : res.meta" },
+			{ id: "page", let: "s1.page" },
+		]);
+	});
+
+	it("a path source is read directly; anything else is derived once", () => {
+		const script = parseJsScript(`
+			const res = await github.listIssues({ repo: "api" });
+			const { total } = res.meta;
+			const { length } = res.items.filter(i => i.stale);
+		`);
+		expect(script.steps.slice(1)).toEqual([
+			{ id: "total", let: "res.meta.total" },
+			{ id: "s1", let: "res.items.filter(i => i.stale)" },
+			{ id: "length", let: "s1.length" },
+		]);
+	});
+
+	it("inside try, the fields exist only when the call succeeded", () => {
+		const script = parseJsScript(`
+			try {
+				const { closed } = await github.closeIssue({ number: 7 });
+				const msg = \`closed \${closed}\`;
+			} catch (e) {
+				await slack.post({ text: e.message });
+			}
+		`);
+		const [call, closed, msg, failed] = script.steps as [
+			CallStep,
+			LetStep,
+			LetStep,
+			CallStep,
+		];
+		expect(call).toEqual({
+			id: "s1",
+			call: "github.closeIssue",
+			args: { number: 7 },
+			onError: "skip",
+		});
+		expect(closed).toEqual({
+			id: "closed",
+			let: "s1.closed",
+			if: "!($errors.s1)",
+		});
+		expect(msg).toEqual({
+			id: "msg",
+			let: "`closed ${closed}`",
+			if: "!($errors.s1)",
+		});
+		expect(failed.if).toBe("$errors.s1");
+		expect(failed.args).toEqual({ text: "=$errors.s1.message" });
+	});
+
+	it("a nested pattern in a Promise.all tuple reads off its own call", () => {
+		const script = parseJsScript(`
+			const [{ closed }, posted] = await Promise.all([
+				github.closeIssue({ number: 7 }),
+				slack.post({ text: "hi" }),
+			]);
+		`);
+		expect(script.steps).toEqual([
+			{ id: "s1", call: "github.closeIssue", args: { number: 7 } },
+			{ id: "posted", call: "slack.post", args: { text: "hi" } },
+			{ id: "closed", let: "s1.closed" },
+		]);
+	});
+
+	it("minted ids never collide with names bound deep in a pattern", () => {
+		const script = parseJsScript(`
+			const { a: { s1 } } = await github.getThing({});
+		`);
+		expect(script.steps.map((s) => s.id)).toEqual(["s2", "s1"]);
+	});
+
+	it("runs end to end through the engine", async () => {
+		const listIssues = tool({
+			name: "github.listIssues",
+			execute: () => ({
+				items: [{ number: 1 }, { number: 2 }, { number: 3 }],
+				meta: { total: 3 },
+			}),
+		});
+		const engine = callscript({ tools: [listIssues] });
+		const result = await engine.run({
+			script: `
+				const { items, meta: { total, page = 1 }, missing = "none" } = await github.listIssues({});
+				const [head, ...tail] = items;
+				return { head, tail: tail.length, total, page, missing };
+			`,
+		});
+		expect(result.status).toBe("ok");
+		if (result.status === "ok") {
+			expect(result.output).toEqual({
+				head: { number: 1 },
+				tail: 2,
+				total: 3,
+				page: 1,
+				missing: "none",
+			});
+		}
+	});
+
+	it("computed keys, forbidden keys, and destructured detached calls stay rejected", () => {
+		expect(
+			issuesOf(() =>
+				parseJsScript(`
+					const res = await github.listIssues({});
+					const { [key]: v } = res;
+				`),
+			)[0],
+		).toMatch(/computed key/);
+		expect(
+			issuesOf(() =>
+				parseJsScript(`
+					const res = await github.listIssues({});
+					const { constructor } = res;
+				`),
+			)[0],
+		).toMatch(/constructor/);
+		expect(
+			issuesOf(() =>
+				parseJsScript(`const { id } = svc.export({});`, {
+					tools: ["svc.export"],
+				}),
+			)[0],
+		).toMatch(/detached call to one name/);
+	});
+});
+
+describe("for..of bodies", () => {
+	// a for..of IS Promise.all(list.map(...)), so its body may carry what
+	// a map arrow can express - and nothing more
+
+	it("an if guard around the call filters the list", () => {
+		const script = parseJsScript(`
+			const issues = await github.listIssues({ repo: "api" });
+			for (const i of issues.slice(0, 10)) {
+				if (i.stale) await github.closeIssue({ number: i.number });
+			}
+		`);
+		expect(script.steps[1]).toEqual({
+			id: "s1",
+			call: "github.closeIssue",
+			each: "(issues.slice(0, 10)).filter((i) => (i.stale)).map((i) => ({ number: i.number }))",
+			max: 10,
+		});
+	});
+
+	it("`if (cond) continue` skips items; local consts inline into the call", () => {
+		const script = parseJsScript(`
+			const issues = await github.listIssues({ repo: "api" });
+			for (const i of issues) {
+				const n = i.number;
+				const doubled = n * 2;
+				if (!i.stale) continue;
+				await github.closeIssue({ number: doubled, tag: \`#\${n}\` });
+			}
+		`);
+		expect((script.steps[1] as CallStep).each).toBe(
+			"(issues).filter((i) => (!(!i.stale))).map((i) => ({ number: ((i.number) * 2), tag: `#${(i.number)}` }))",
+		);
+	});
+
+	it("a guarded block may hold locals before its call; a bound call is fine", () => {
+		const script = parseJsScript(`
+			const issues = await github.listIssues({ repo: "api" });
+			for (const i of issues) {
+				if (i.stale) {
+					const label = \`#\${i.number}\`;
+					const r = await slack.post({ text: label });
+				}
+			}
+		`);
+		expect((script.steps[1] as CallStep).each).toBe(
+			"(issues).filter((i) => (i.stale)).map((i) => ({ text: (`#${i.number}`) }))",
+		);
+	});
+
+	it("runs end to end: only the guarded items dispatch, locals resolve", async () => {
+		const closed: number[] = [];
+		const listIssues = tool({
+			name: "github.listIssues",
+			execute: () => [
+				{ number: 1, stale: true },
+				{ number: 2, stale: false },
+				{ number: 3, stale: true },
+			],
+		});
+		const closeIssue = tool({
+			name: "github.closeIssue",
+			execute: (args: { number: number }) => {
+				closed.push(args.number);
+				return { closed: args.number };
+			},
+		});
+		const engine = callscript({ tools: [listIssues, closeIssue] });
+		const result = await engine.run({
+			script: `
+				const issues = await github.listIssues({});
+				for (const i of issues) {
+					const n = i.number;
+					if (!i.stale) continue;
+					await github.closeIssue({ number: n * 10 });
+				}
+			`,
+		});
+		expect(result.status).toBe("ok");
+		expect(closed.sort()).toEqual([10, 30]);
+	});
+
+	it("a real loop body stays rejected with the fan-out spelling", () => {
+		const message = /one awaited tool call.*Promise\.all\(list\.map/;
+		expect(
+			issuesOf(() =>
+				parseJsScript(`
+					for (const i of issues) {
+						await github.closeIssue({ number: i.number });
+						await slack.post({ text: "closed" });
+					}
+				`),
+			)[0],
+		).toMatch(message);
+		expect(
+			issuesOf(() =>
+				parseJsScript(`
+					for (const i of issues) {
+						if (i.stale) await github.closeIssue({ number: i.number });
+						else await slack.post({ text: "kept" });
+					}
+				`),
+			)[0],
+		).toMatch(message);
+		expect(
+			issuesOf(() =>
+				parseJsScript(`
+					for (const i of issues) {
+						if (i.stale) return { first: i };
+					}
+				`),
+			)[0],
+		).toMatch(message);
+	});
+});
+
+describe("await hoisting", () => {
+	// an awaited call nested in an expression compiles into its own step
+	// first, and the expression reads the step - the plan the author gets
+	// by binding it, without the retry that used to demand the binding
+
+	it("`return { x: await tool() }` hoists the call and projects its id", () => {
+		const script = parseJsScript(`
+			return { issues: await github.listIssues({ repo: "api" }), n: 1 };
+		`);
+		expect(script.steps).toEqual([
+			{ id: "s1", call: "github.listIssues", args: { repo: "api" } },
+		]);
+		expect(script.output).toBe("{ issues: s1, n: 1 }");
+	});
+
+	it("an await inside a call's arguments hoists ahead of the call", () => {
+		const script = parseJsScript(`
+			const closed = await github.closeIssue({
+				number: (await github.getIssue({ n: 1 })).number,
+			});
+		`);
+		expect(script.steps).toEqual([
+			{ id: "s1", call: "github.getIssue", args: { n: 1 } },
+			{
+				id: "closed",
+				call: "github.closeIssue",
+				args: { number: "=(s1).number" },
+			},
+		]);
+	});
+
+	it("several awaits hoist in source order and chain like statements", () => {
+		const script = parseJsScript(`
+			const total = (await a.count({})) + (await b.count({}));
+			await slack.post({ text: total });
+		`);
+		const [first, second, total, post] = script.steps as [
+			CallStep,
+			CallStep,
+			LetStep,
+			CallStep,
+		];
+		expect(first).toEqual({ id: "s1", call: "a.count", args: {} });
+		expect(second).toEqual({
+			id: "s2",
+			call: "b.count",
+			args: {},
+			after: ["s1"],
+		});
+		expect(total).toEqual({ id: "total", let: "(s1) + (s2)" });
+		// the post reads total, which closes over both calls - no after edge
+		expect(post.after).toBeUndefined();
+	});
+
+	it("hoists inside guards and catch blocks, renames intact", () => {
+		const script = parseJsScript(`
+			try {
+				const closed = await github.closeIssue({ number: 1 });
+			} catch (e) {
+				const report = { text: e.message, sent: await slack.post({ text: e.message }) };
+			}
+		`);
+		const [, post, report] = script.steps as [CallStep, CallStep, LetStep];
+		expect(post).toMatchObject({
+			id: "s1",
+			call: "slack.post",
+			args: { text: "=$errors.closed.message" },
+			if: "$errors.closed",
+		});
+		expect(report).toEqual({
+			id: "report",
+			let: "{ text: $errors.closed.message, sent: s1 }",
+			if: "$errors.closed",
+		});
+	});
+
+	it("runs end to end through the engine", async () => {
+		const listIssues = tool({
+			name: "github.listIssues",
+			execute: (args: { repo: string }) => [
+				{ number: 1, repo: args.repo },
+				{ number: 2, repo: args.repo },
+			],
+		});
+		const engine = callscript({ tools: [listIssues] });
+		const result = await engine.run({
+			script: `
+				const n = (await github.listIssues({ repo: "api" })).length;
+				return { n, again: (await github.listIssues({ repo: "web" })).map(i => i.repo) };
+			`,
+		});
+		expect(result.status).toBe("ok");
+		if (result.status === "ok") {
+			expect(result.output).toEqual({ n: 2, again: ["web", "web"] });
+		}
+	});
+
+	it("a nested Promise.all and an await on a non-call stay rejected", () => {
+		expect(
+			issuesOf(() =>
+				parseJsScript(`
+					return { closed: await Promise.all(xs.map(x => t.close({ x }))) };
+				`),
+			)[0],
+		).toMatch(/bind a fan-out first/);
+		expect(
+			issuesOf(() => parseJsScript(`return { v: (await job) + 1 };`))[0],
+		).toMatch(/await belongs directly on a tool call/);
+	});
+});
+
+describe("conditional assignment", () => {
+	// `let x = a; if (cond) x = b;` is one derivation - the same plan as
+	// `const x = cond ? b : a`, without the retry over reassignment
+
+	it("`let x = a; if (c) x = b` becomes a conditional let", () => {
+		const script = parseJsScript(`
+			const issues = await github.listIssues({ repo: "api" });
+			let label = "none";
+			if (issues.length > 0) label = "some";
+			return label;
+		`);
+		expect(script.steps[1]).toEqual({
+			id: "label",
+			let: '(issues.length > 0) ? ("some") : ("none")',
+		});
+		expect(script.output).toBe("label");
+	});
+
+	it("else branches, block bodies, and a dead initializer", () => {
+		const script = parseJsScript(`
+			const issues = await github.listIssues({ repo: "api" });
+			let tone;
+			if (issues.length > 5) { tone = "busy"; } else { tone = "calm"; }
+			let first = null;
+			if (issues.length > 0) first = issues[0];
+			await slack.post({ text: \`\${tone}: \${first?.title ?? "-"}\` });
+		`);
+		expect(script.steps.slice(1, 3)).toEqual([
+			{ id: "tone", let: '(issues.length > 5) ? ("busy") : ("calm")' },
+			{ id: "first", let: "(issues.length > 0) ? (issues[0]) : (null)" },
+		]);
+		expect((script.steps[3] as CallStep).after).toBeUndefined();
+	});
+
+	it("inherits the enclosing guard", () => {
+		const script = parseJsScript(`
+			const issues = await github.listIssues({ repo: "api" });
+			if (issues.length > 0) {
+				let n = 0;
+				if (issues[0].stale) n = 1;
+				await slack.post({ text: n });
+			}
+		`);
+		expect(script.steps[1]).toEqual({
+			id: "n",
+			let: "(issues[0].stale) ? (1) : (0)",
+			if: "issues.length > 0",
+		});
+	});
+
+	it("runs end to end through the engine", async () => {
+		const listIssues = tool({
+			name: "github.listIssues",
+			execute: () => [{ number: 1 }, { number: 2 }],
+		});
+		const engine = callscript({ tools: [listIssues] });
+		const result = await engine.run({
+			script: `
+				const issues = await github.listIssues({});
+				let label = "none";
+				if (issues.length > 1) label = "many";
+				let first;
+				if (issues.length > 0) first = issues[0].number; else first = -1;
+				return { label, first };
+			`,
+		});
+		expect(result.status).toBe("ok");
+		if (result.status === "ok") {
+			expect(result.output).toEqual({ label: "many", first: 1 });
+		}
+	});
+
+	it("stays narrow: else-if chains, awaits in a branch, and other work keep the reassignment message", () => {
+		const reassign = /single-assignment/;
+		expect(
+			issuesOf(() =>
+				parseJsScript(`
+					let label = "none";
+					if (a) label = "x"; else if (b) label = "y";
+				`),
+			).join("\n"),
+		).toMatch(reassign);
+		expect(
+			issuesOf(() =>
+				parseJsScript(`
+					let r = null;
+					if (a) r = await t.fetch({});
+				`),
+			).join("\n"),
+		).toMatch(reassign);
+		expect(
+			issuesOf(() =>
+				parseJsScript(`
+					let n = 0;
+					if (a) { n = 1; await t.ping({}); }
+				`),
+			).join("\n"),
+		).toMatch(reassign);
+	});
+});
+
+describe("wrappers", () => {
+	// a model picturing a module wraps top-level await; the body is the
+	// script, so it compiles as the program
+
+	it("an async IIFE unwraps: body statements, return as output, comment as intent", () => {
+		for (const src of [
+			`
+				// close stale issues
+				(async () => {
+					const issues = await github.listIssues({ repo: "api" });
+					return { n: issues.length };
+				})();
+			`,
+			`
+				// close stale issues
+				await (async function () {
+					const issues = await github.listIssues({ repo: "api" });
+					return { n: issues.length };
+				})();
+			`,
+		]) {
+			const script = parseJsScript(src);
+			expect(script.intent).toBe("close stale issues");
+			expect(script.steps).toEqual([
+				{ id: "issues", call: "github.listIssues", args: { repo: "api" } },
+			]);
+			expect(script.output).toBe("{ n: issues.length }");
+		}
+	});
+
+	it("`async function main() { ... } main()` unwraps the same way", () => {
+		for (const tail of ["main();", "await main();"]) {
+			const script = parseJsScript(`
+				async function main() {
+					const issues = await github.listIssues({ repo: "api" });
+					if (issues.length === 0) return { n: 0 };
+					return { n: issues.length };
+				}
+				${tail}
+			`);
+			expect(script.steps.map((s) => s.id)).toEqual(["issues", "s1"]);
+			expect(script.output).toBe("{ n: issues.length }");
+		}
+	});
+
+	it("names inside the wrapper still reserve their ids", () => {
+		const script = parseJsScript(`
+			(async () => {
+				const s1 = await t.a({});
+				return { x: await t.b({}) };
+			})();
+		`);
+		expect(script.steps.map((s) => s.id)).toEqual(["s1", "s2"]);
+	});
+
+	it("runs end to end through the engine", async () => {
+		const listIssues = tool({
+			name: "github.listIssues",
+			execute: () => [{ number: 1 }, { number: 2 }],
+		});
+		const engine = callscript({ tools: [listIssues] });
+		const result = await engine.run({
+			script: `
+				async function main() {
+					const issues = await github.listIssues({});
+					return { n: issues.length };
+				}
+				main();
+			`,
+		});
+		expect(result.status).toBe("ok");
+		if (result.status === "ok") expect(result.output).toEqual({ n: 2 });
+	});
+
+	it("a .catch on the wrapper, or a main() not called plainly, is rejected with the reason", () => {
+		expect(
+			issuesOf(() =>
+				parseJsScript(`
+					(async () => {
+						await github.listIssues({ repo: "api" });
+					})().catch(console.error);
+				`),
+			).join("\n"),
+		).toMatch(/drop the \.then\/\.catch/);
+		expect(
+			issuesOf(() =>
+				parseJsScript(`
+					async function main() {
+						await github.listIssues({ repo: "api" });
+					}
+					main().catch(console.error);
+				`),
+			).join("\n"),
+		).toMatch(/call the wrapper plainly.*main\(\)/);
+	});
+});
+
+describe("fan-out arrow bodies", () => {
+	// list.map(async item => { ... }) shares the for..of body grammar:
+	// locals, skip guards (a bare return), a trailing if, one call
+
+	it("a block body with locals, a skip guard, and a returned call", () => {
+		const script = parseJsScript(`
+			const issues = await github.listIssues({ repo: "api" });
+			const closed = await Promise.all(issues.slice(0, 5).map(async i => {
+				const n = i.number;
+				if (!i.stale) return;
+				return await github.closeIssue({ number: n });
+			}));
+		`);
+		expect(script.steps[1]).toEqual({
+			id: "closed",
+			call: "github.closeIssue",
+			each: "(issues.slice(0, 5)).filter((i) => (!(!i.stale))).map((i) => ({ number: (i.number) }))",
+			max: 5,
+		});
+	});
+
+	it("a trailing if around the call; return without await; a bare awaited call", () => {
+		const guarded = parseJsScript(`
+			const results = await Promise.all(issues.map(async (i) => {
+				if (i.stale) {
+					const tag = \`#\${i.number}\`;
+					return slack.post({ text: tag });
+				}
+			}));
+		`);
+		expect((guarded.steps[0] as CallStep).each).toBe(
+			"(issues).filter((i) => (i.stale)).map((i) => ({ text: (`#${i.number}`) }))",
+		);
+		const bare = parseJsScript(`
+			await Promise.all(issues.map(async i => {
+				await github.closeIssue({ number: i.number });
+			}));
+		`);
+		expect((bare.steps[0] as CallStep).each).toBe(
+			"(issues).map((i) => ({ number: i.number }))",
+		);
+	});
+
+	it("runs end to end: only the guarded items dispatch", async () => {
+		const closed: number[] = [];
+		const listIssues = tool({
+			name: "github.listIssues",
+			execute: () => [
+				{ number: 1, stale: true },
+				{ number: 2, stale: false },
+				{ number: 3, stale: true },
+			],
+		});
+		const closeIssue = tool({
+			name: "github.closeIssue",
+			execute: (args: { number: number }) => {
+				closed.push(args.number);
+				return { closed: args.number };
+			},
+		});
+		const engine = callscript({ tools: [listIssues, closeIssue] });
+		const result = await engine.run({
+			script: `
+				const issues = await github.listIssues({});
+				const done = await Promise.all(issues.map(async i => {
+					if (!i.stale) return;
+					return await github.closeIssue({ number: i.number * 10 });
+				}));
+				return done.map(d => d.closed);
+			`,
+		});
+		expect(result.status).toBe("ok");
+		if (result.status === "ok") expect(result.output).toEqual([10, 30]);
+		expect(closed.sort()).toEqual([10, 30]);
+	});
+
+	it("a real arrow body stays rejected, naming the expression form", () => {
+		const message = /fan-out arrow's block is one awaited tool call/;
+		expect(
+			issuesOf(() =>
+				parseJsScript(`
+					await Promise.all(issues.map(async i => {
+						const r = await github.closeIssue({ number: i.number });
+						await slack.post({ text: r.closed });
+					}));
+				`),
+			)[0],
+		).toMatch(message);
+		expect(
+			issuesOf(() =>
+				parseJsScript(`
+					await Promise.all(issues.map(async i => {
+						if (i.stale) return github.closeIssue({ number: i.number });
+						else return slack.post({ text: "kept" });
+					}));
+				`),
+			)[0],
+		).toMatch(message);
+	});
+});
+
 describe("effect ordering", () => {
 	it("sequential awaited calls chain via after; data edges suppress it", () => {
 		const script = parseJsScript(`
@@ -368,6 +1074,28 @@ describe("teaching rejections", () => {
 		expect(msg).toContain("Promise.all");
 	});
 
+	it("forEach names the Promise.all fan-out", () => {
+		const issues = issuesOf(() =>
+			parseJsScript(`
+				const issues = await github.listIssues({ repo: "api" });
+				issues.forEach(i => github.closeIssue({ number: i.number }));
+			`),
+		);
+		expect(issues[0]).toMatch(
+			/forEach cannot fan out.*Promise\.all\(list\.map/,
+		);
+	});
+
+	it("console.log names the return-the-value fix", () => {
+		const issues = issuesOf(() =>
+			parseJsScript(`
+				const issues = await github.listIssues({ repo: "api" });
+				console.log(issues);
+			`),
+		);
+		expect(issues[0]).toMatch(/console\.log has nowhere to print.*return/);
+	});
+
 	it("reassignment names single-assignment", () => {
 		const issues = issuesOf(() => parseJsScript(`const a = 1;\na = 2;`));
 		expect(issues.join("\n")).toContain("single-assignment");
@@ -399,11 +1127,29 @@ describe("teaching rejections", () => {
 		}
 	});
 
-	it("await deep in an expression names the bind-first fix", () => {
-		const issues = issuesOf(() =>
-			parseJsScript(`const n = (await t.count({})) + 1;`),
-		);
-		expect(issues.join("\n")).toContain("bind it first");
+	it("await inside an arrow names the fan-out; inside a fan-out, the bind-first fix", () => {
+		expect(
+			issuesOf(() =>
+				parseJsScript(`const n = xs.map(async x => await t.count({ x }));`),
+			).join("\n"),
+		).toMatch(/await inside an arrow.*Promise\.all\(list\.map/);
+		expect(
+			issuesOf(() =>
+				parseJsScript(`
+					const done = await Promise.all(xs.map(async x => t.close({ id: (await t.find({ x })).id })));
+				`),
+			).join("\n"),
+		).toMatch(/fan-out's arguments cannot await.*const x = await/);
+		expect(
+			issuesOf(() =>
+				parseJsScript(`
+					for (const x of xs) {
+						const found = { id: await t.find({ x }) };
+						await t.close({ id: found.id });
+					}
+				`),
+			).join("\n"),
+		).toMatch(/for\.\.of body|cannot await/);
 	});
 
 	it("issues carry source lines", () => {
