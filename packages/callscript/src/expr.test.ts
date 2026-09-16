@@ -93,9 +93,10 @@ describe("evalExpr", () => {
 		expect(() => evalExpr('issues["constructor"]', env)).toThrow(ExprError);
 	});
 
-	it("rejects statements, assignment, new, regex, await", () => {
+	it("rejects statements, assignment, new (other than Date), regex, await", () => {
 		expect(() => parseExpr("a = 1")).toThrow(ExprError);
-		expect(() => parseExpr("new Date()")).toThrow(ExprError);
+		expect(() => parseExpr("new Map()")).toThrow(ExprError);
+		expect(() => parseExpr("new Date(...xs)")).toThrow(ExprError);
 		expect(() => parseExpr("/abc/.test(s)")).toThrow(ExprError);
 		expect(() => parseExpr("(async () => 1)()")).toThrow(ExprError);
 		expect(() => parseExpr("x => { return x }")).toThrow(ExprError);
@@ -146,6 +147,29 @@ describe("evalExpr", () => {
 	it("bans `new` with a hint at the alternatives", () => {
 		expect(() => evalExpr("[...new Set(xs)]", { xs: [1] })).toThrow(
 			/Object\.groupBy|indexOf/,
+		);
+		expect(() => evalExpr("new Foo()", {})).toThrow(/new Date/);
+	});
+
+	it("new Date(...) gives the ISO 8601 string", () => {
+		expect(evalExpr("new Date(0)", {})).toBe("1970-01-01T00:00:00.000Z");
+		expect(evalExpr('new Date("2026-09-16")', {})).toBe(
+			"2026-09-16T00:00:00.000Z",
+		);
+		expect(
+			evalExpr("new Date(Date.parse(day) + 86400000)", {
+				day: "2026-09-16T00:00:00Z",
+			}),
+		).toBe("2026-09-17T00:00:00.000Z");
+		expect(evalExpr("new Date(t).slice(0, 10)", { t: 1789560000000 })).toBe(
+			"2026-09-16",
+		);
+		expect(typeof evalExpr("new Date()", {})).toBe("string");
+		expect(() => evalExpr('new Date("not a date")', {})).toThrow(
+			/Invalid date/,
+		);
+		expect(collectRefs(parseExpr("new Date(Date.parse(day) + ms)"))).toEqual(
+			new Set(["day", "ms"]),
 		);
 	});
 

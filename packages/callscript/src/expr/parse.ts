@@ -88,7 +88,7 @@ export function parseExpr(source: string): acorn.Expression {
 
 function fail(node: acorn.AnyNode, what?: string): never {
 	throw new ExprError(
-		`Unsupported syntax: ${what ?? node.type}. Expressions are a pure subset of JS (no statements, assignment, new, regex, or await).`,
+		`Unsupported syntax: ${what ?? node.type}. Expressions are a pure subset of JS (no statements, assignment, regex, or await; new only as new Date(...)).`,
 		"syntax",
 	);
 }
@@ -194,14 +194,25 @@ export function validateNode(node: acorn.AnyNode): void {
 			if (!ALLOWED_UNARY.has(node.operator)) fail(node, node.operator);
 			validateNode(node.argument);
 			return;
-		case "NewExpression":
+		case "NewExpression": {
+			// `new Date(...)` is the one constructor: it yields the ISO 8601 string
+			// (a Date's JSON form), so values stay plain data across a suspend.
+			if (node.callee.type === "Identifier" && node.callee.name === "Date") {
+				for (const arg of node.arguments) {
+					if (arg.type === "SpreadElement")
+						fail(arg, "spread in call arguments");
+					validateNode(arg);
+				}
+				return;
+			}
 			// `new Set(...)` is THE dedupe idiom - ban it with the alternative,
 			// not just the rule, so the retry converges in one round trip.
 			throw new ExprError(
-				"Unsupported syntax: new. Dedupe with xs.filter((x, i, a) => a.indexOf(x) === i); " +
-					"group with Object.groupBy(xs, x => x.key).",
+				"Unsupported syntax: new (only new Date(...) is supported; it gives an ISO 8601 string). " +
+					"Dedupe with xs.filter((x, i, a) => a.indexOf(x) === i); group with Object.groupBy(xs, x => x.key).",
 				"syntax",
 			);
+		}
 		default:
 			fail(node);
 	}
@@ -299,6 +310,10 @@ export function collectRefs(node: acorn.AnyNode): Set<string> {
 				// Identifier callees are globals (Number, String, Boolean) — not refs.
 				for (const arg of n.arguments) walk(arg as acorn.AnyNode, bound);
 				return;
+			case "NewExpression":
+				// Only `new Date(...)` validates; the callee is a global, the arguments may be refs.
+				for (const arg of n.arguments) walk(arg as acorn.AnyNode, bound);
+				return;
 			case "ArrowFunctionExpression": {
 				const inner = new Set(bound);
 				for (const p of n.params)
@@ -394,6 +409,7 @@ export function errorSelectors(node: acorn.AnyNode): {
 				walk(n.expression, bound);
 				return;
 			case "CallExpression":
+			case "NewExpression":
 				if (n.callee.type === "MemberExpression") walk(n.callee, bound);
 				for (const arg of n.arguments) walk(arg as acorn.AnyNode, bound);
 				return;
