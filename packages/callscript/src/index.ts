@@ -13,22 +13,27 @@ export {
 	renderJsonSchemaType,
 	searchTools,
 	toolCard,
-	toolCards, type IntrospectableTool
+	toolCards,
+	type IntrospectableTool,
 } from "./describe";
 // the durable runner - experimental, see durable.ts
 export * from "./durable";
 // the engine - mount tools, get the execute/search pair
 export {
 	callscript,
-	earlyReturn, suspend, type AgentDescribeInput,
+	earlyReturn,
+	suspend,
+	type AgentDescribeInput,
 	type AgentExecuteResult,
 	type AgentSearchInput,
 	type AgentTool,
-	type CompiledScriptTool, type RunInput,
+	type CompiledScriptTool,
+	type RunInput,
 	type ScriptEngine,
 	type ScriptEngineOptions,
 	type SessionOptions,
-	type SessionRunner, type ToolsOptions
+	type SessionRunner,
+	type ToolsOptions,
 } from "./engine";
 export { publishedVariables, stableStringify } from "./execute";
 export { evalExpr } from "./expr/eval";
@@ -36,17 +41,20 @@ export { evalExpr } from "./expr/eval";
 export { parseJsScript, type ParseJsOptions } from "./js";
 // the tool contract - the one seam adapters (and literals) fill
 export {
-	tool, type AnyScriptTool,
+	tool,
+	type AnyScriptTool,
 	type JsonSchema,
 	type ScriptTool,
 	type ToolCallContext,
-	type ToolMap
+	type ToolMap,
 } from "./tool";
 
 // the plan format - steps, limits, run records, and their guards
 export * from "./types";
 // the validator - the whole plan checked before anything runs
 export {
-	ScriptValidationError, validateScript, type ScriptIssue, type ValidateOptions
+	ScriptValidationError,
+	validateScript,
+	type ScriptIssue,
+	type ValidateOptions,
 } from "./validate";
-
