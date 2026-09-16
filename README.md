@@ -1,8 +1,11 @@
 # callscript
 
-**Code Mode, without the sandbox.**
+<p>
+  <a href="https://vercel.com/labs#active-experiments"><img alt="Vercel Labs Experiment" src="https://img.shields.io/badge/LABS-EXPERIMENT-0a0a0a.svg?style=for-the-badge&amp;logo=Vercel&amp;labelColor=000000" height="28"></a>
+  <a href="https://github.com/vercel-labs/callscript/blob/main/LICENSE"><img alt="License: Apache-2.0" src="https://img.shields.io/github/license/vercel-labs/callscript.svg?style=for-the-badge&amp;labelColor=000000" height="28"></a>
+</p>
 
-> **Experimental.** callscript is a [Vercel Labs](https://github.com/vercel-labs) project. APIs may change between releases.
+**Code Mode, without the sandbox.**
 
 **The model writes JavaScript; callscript parses it into a JSON plan instead of executing it.** Plans validate before they run, suspend and resume across processes, and keep intermediate results addressable so steps aren't re-executed to recover their output. With no sandbox and no separate runtime, the only thing the code can execute is your tools.
 
