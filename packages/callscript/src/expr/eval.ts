@@ -422,6 +422,27 @@ function evaluate(node: acorn.AnyNode, scope: Scope, ctx: EvalCtx): unknown {
 		case "CallExpression":
 			return evaluateCall(node, scope, ctx);
 
+		case "NewExpression": {
+			// Only `new Date(...)` passes validation. It answers the ISO 8601 string -
+			// what JSON makes of a Date - so a step's value survives a suspend unchanged.
+			const args = node.arguments.map((a) =>
+				evaluate(a as acorn.Expression, scope, ctx),
+			);
+			const date =
+				args.length === 0
+					? new Date()
+					: args.length === 1
+						? new Date(args[0] as number)
+						: new Date(...(args as [number, number, ...number[]]));
+			if (Number.isNaN(date.getTime())) {
+				throw new ExprError(
+					`Invalid date: new Date(${args.map((a) => JSON.stringify(a)).join(", ")})`,
+					"type",
+				);
+			}
+			return date.toISOString();
+		}
+
 		case "ArrowFunctionExpression": {
 			const params = node.params;
 			const body = node.body as acorn.Expression;

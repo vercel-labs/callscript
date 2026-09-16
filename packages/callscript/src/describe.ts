@@ -223,7 +223,7 @@ assignment, no await. They may reference earlier step ids, session
 variables, \`input\` (per-run data), and \`$errors.<stepId>\` (a skipped
 failure - use a literal step id). Arrows, ternaries, and template
 literals work; available globals: Math, JSON, Date, Object, Array,
-Number, String, Boolean, Base64. Inside "args", a string starting with
+Number, String, Boolean, Base64; new Date(...) gives an ISO 8601 string. Inside "args", a string starting with
 "=" is an expression ("=issue.number") and any other string is a
 literal; whole-expression positions (let / if / return / each / output)
 take the expression directly, without "=".
@@ -274,8 +274,9 @@ Rules:
 - const only, single assignment; no while/for(;;), function, class, or import -
   fan out with .map over a bounded list
 - awaited calls run in statement order; Promise.all runs them concurrently
-- expressions are pure JS (arrows, ternaries, template literals, ?.) - no new,
-  no regex; globals: Math, JSON, Date, Object, Array, Number, String, Boolean, Base64
+- expressions are pure JS (arrows, ternaries, template literals, ?.) - no regex,
+  no new except new Date(...) (an ISO 8601 string; Date.now()/Date.parse() for ms);
+  globals: Math, JSON, Date, Object, Array, Number, String, Boolean, Base64
 - \`input\` holds per-run data (auth codes, approvals) when a run is re-executed
 - limits: ${lim.maxSteps} steps, ${lim.maxItemsPerStep} calls per fan-out, ${lim.maxTotalCalls} calls total per script${
 		options.requireReason
@@ -458,7 +459,7 @@ variables, \`input\` (per-run data), and \`$errors.<stepId>\` (the failure
 an "onError": "skip" step recorded - use a literal step id; undefined
 when it succeeded). Arrows, ternaries, and template literals work;
 available globals: Math, JSON, Date, Object, Array, Number, String,
-Boolean, Base64. Inside "args", a string starting with "=" is an
+Boolean, Base64; new Date(...) gives an ISO 8601 string. Inside "args", a string starting with "=" is an
 expression ("=issue.number") and any other string is a literal;
 whole-expression positions (let / if / return / each / output) take the
 expression directly, without "=".
