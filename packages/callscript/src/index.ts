@@ -6,54 +6,47 @@
 
 // analysis + rendering - what an authorizer reads before approving
 export { analyzeScript, renderScript } from "./analyze";
+export { collectArgExprs } from "./args";
 // prompt-building blocks for hosts that assemble their own cards
 export {
-	type IntrospectableTool,
 	jsLanguageCard,
 	renderJsonSchemaType,
 	searchTools,
 	toolCard,
-	toolCards,
+	toolCards, type IntrospectableTool
 } from "./describe";
 // the durable runner - experimental, see durable.ts
 export * from "./durable";
 // the engine - mount tools, get the execute/search pair
 export {
-	type AgentDescribeInput,
+	callscript,
+	earlyReturn, suspend, type AgentDescribeInput,
 	type AgentExecuteResult,
 	type AgentSearchInput,
 	type AgentTool,
-	type CompiledScriptTool,
-	callscript,
-	earlyReturn,
-	type RunInput,
+	type CompiledScriptTool, type RunInput,
 	type ScriptEngine,
 	type ScriptEngineOptions,
 	type SessionOptions,
-	type SessionRunner,
-	suspend,
-	type ToolsOptions,
+	type SessionRunner, type ToolsOptions
 } from "./engine";
-// session inspection
-export { publishedVariables } from "./execute";
+export { publishedVariables, stableStringify } from "./execute";
+export { evalExpr } from "./expr/eval";
 // the JS frontend - model-authored JS in, inert plan out
-export { type ParseJsOptions, parseJsScript } from "./js";
+export { parseJsScript, type ParseJsOptions } from "./js";
 // the tool contract - the one seam adapters (and literals) fill
 export {
-	type AnyScriptTool,
+	tool, type AnyScriptTool,
 	type JsonSchema,
 	type ScriptTool,
 	type ToolCallContext,
-	type ToolMap,
-	tool,
+	type ToolMap
 } from "./tool";
 
 // the plan format - steps, limits, run records, and their guards
 export * from "./types";
 // the validator - the whole plan checked before anything runs
 export {
-	type ScriptIssue,
-	ScriptValidationError,
-	type ValidateOptions,
-	validateScript,
+	ScriptValidationError, validateScript, type ScriptIssue, type ValidateOptions
 } from "./validate";
+
