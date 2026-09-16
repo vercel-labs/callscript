@@ -4,11 +4,12 @@ export default defineConfig({
 	entry: {
 		index: "./src/index.ts",
 		"ai-sdk": "./src/adapters/ai-sdk.ts",
+		mastra: "./src/adapters/mastra.ts",
 		mcp: "./src/adapters/mcp.ts",
 	},
 	format: ["esm"],
 	fixedExtension: false,
 	dts: true,
 	clean: true,
-	deps: { neverBundle: ["ai"] },
+	deps: { neverBundle: ["ai", "@mastra/core"] },
 });
