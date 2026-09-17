@@ -1,4 +1,5 @@
 import { collectArgExprs, resolveArgs } from "./args";
+import { utf8ByteLength } from "./encoding";
 import { evalExpr } from "./expr/eval";
 import {
 	collectRefs,
@@ -331,7 +332,7 @@ export function planExecution(script: Script, state?: RunState): StepPlan[] {
 
 function approxBytes(value: unknown): number {
 	const json = JSON.stringify(value);
-	return json === undefined ? 0 : Buffer.byteLength(json, "utf8");
+	return json === undefined ? 0 : utf8ByteLength(json);
 }
 
 export async function executeScript(

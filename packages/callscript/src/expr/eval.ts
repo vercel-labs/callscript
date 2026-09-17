@@ -1,4 +1,5 @@
 import type * as acorn from "acorn";
+import { decodeBase64, encodeBase64 } from "../encoding";
 import { ExprError, FORBIDDEN_PROPS, parseExpr } from "./parse";
 
 interface EvalCtx {
@@ -85,13 +86,11 @@ const SAFE_ARRAY = Object.freeze({
  * had no way to touch it. Pure string→string, no host authority.
  */
 const SAFE_BASE64 = Object.freeze({
-	encode: (v: unknown) => Buffer.from(String(v), "utf8").toString("base64"),
-	decode: (v: unknown) => Buffer.from(String(v), "base64").toString("utf8"),
+	encode: (v: unknown) => encodeBase64(String(v)),
+	decode: (v: unknown) => decodeBase64(String(v)),
 	/** URL-safe alphabet, no padding - what Gmail's `raw`/`body.data` use. */
-	encodeUrl: (v: unknown) =>
-		Buffer.from(String(v), "utf8").toString("base64url"),
-	decodeUrl: (v: unknown) =>
-		Buffer.from(String(v), "base64url").toString("utf8"),
+	encodeUrl: (v: unknown) => encodeBase64(String(v), true),
+	decodeUrl: (v: unknown) => decodeBase64(String(v)),
 });
 
 const SAFE_NUMBER = Object.freeze({
