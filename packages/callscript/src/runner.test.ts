@@ -398,9 +398,14 @@ describe("runner: cancellation and digest bounds", () => {
 		);
 		release("x".repeat(100));
 		await runner.result("big");
-		expect(runner.digest()).toEqual({
-			big: { status: "done", outputOmitted: true },
-		});
+		vi.stubGlobal("Buffer", undefined);
+		try {
+			expect(runner.digest()).toEqual({
+				big: { status: "done", outputOmitted: true },
+			});
+		} finally {
+			vi.unstubAllGlobals();
+		}
 		const joined = await runner.start(
 			script({
 				steps: [
