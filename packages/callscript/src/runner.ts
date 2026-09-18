@@ -1,4 +1,3 @@
-import { utf8ByteLength } from "./encoding";
 import {
 	executeScript,
 	referencedNames,
@@ -265,7 +264,7 @@ export function createRunner(options: RunnerOptions): ScriptRunner {
 			const json = JSON.stringify(entry.output);
 			if (
 				json !== undefined &&
-				utf8ByteLength(json) > maxDigestOutputBytes
+				new TextEncoder().encode(json).byteLength > maxDigestOutputBytes
 			) {
 				line.outputOmitted = true;
 			} else {
