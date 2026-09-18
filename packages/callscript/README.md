@@ -104,7 +104,7 @@ And a step can carry modifiers:
 
 A few more things the language gives you:
 
-- **Globals.** Expressions read earlier steps by id, `input` (data passed to this execution), variables published by earlier runs in the session, `$errors.<stepId>` for recorded failures, and safe built-ins like `Math`, `JSON`, and `Date`.
+- **Globals.** Expressions read earlier steps by id, `input` (data passed to this execution), variables published by earlier runs in the session, `$errors.<stepId>` for recorded failures, and safe built-ins like `Math`, `JSON`, and `Date`. `new Date(...)` gives an ISO 8601 string; the read-only `Date` API (`getUTCDate()`, `getTime()`, `toISOString()`, ...) works on it.
 - **Promises.** Every call is async; `await` only decides whether the run blocks on it. A call *without* `await` detaches and keeps running in the background; a later script joins it with `const r = await job`.
 - **Expressions.** A side-effect-free subset of JS: arrows, template literals, ternaries, optional chaining - no I/O, no imports, no reaching outside the script's scope.
 - **Output.** `output` projects the run's final result from any settled step; by default it is the last step's value.

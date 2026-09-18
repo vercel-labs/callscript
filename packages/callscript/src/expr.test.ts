@@ -173,6 +173,36 @@ describe("evalExpr", () => {
 		);
 	});
 
+	it("Date getters and Date.UTC work on the ISO string", () => {
+		const now = "2026-09-18T20:15:30.250Z";
+		// The "tomorrow's events" idiom, verbatim from a model.
+		expect(
+			evalExpr(
+				"new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1, 0, 0, 0))",
+				{ now },
+			),
+		).toBe("2026-09-19T00:00:00.000Z");
+		expect(evalExpr("now.toISOString()", { now })).toBe(now);
+		expect(evalExpr("now.toJSON().slice(0, 10)", { now })).toBe("2026-09-18");
+		expect(evalExpr("now.getTime()", { now })).toBe(Date.parse(now));
+		expect(evalExpr("now.getUTCDay()", { now })).toBe(5);
+		expect(
+			evalExpr("now.getUTCHours() * 60 + now.getUTCMinutes()", { now }),
+		).toBe(20 * 60 + 15);
+		expect(evalExpr("new Date(0).getUTCFullYear()", {})).toBe(1970);
+		expect(
+			evalExpr('now.toLocaleDateString("en-US", { timeZone: "UTC" })', {
+				now,
+			}),
+		).toBe("9/18/2026");
+		// Not a date: a type error, not NaN.
+		expect(() => evalExpr("s.getTime()", { s: "hello" })).toThrow(/not a date/);
+		// Setters are mutation; point at the immutable alternative.
+		expect(() => evalExpr("now.setDate(1)", { now })).toThrow(/new Date\(/);
+		// Plain string methods still win when the name collides.
+		expect(evalExpr("now.slice(0, 4)", { now })).toBe("2026");
+	});
+
 	it("encodes and decodes base64 (incl. url-safe)", () => {
 		expect(evalExpr('Base64.encode("hi")', {})).toBe("aGk=");
 		expect(evalExpr('Base64.decode("aGk=")', {})).toBe("hi");
