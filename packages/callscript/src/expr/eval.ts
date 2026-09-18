@@ -41,6 +41,8 @@ const SAFE_JSON = Object.freeze({
 const SAFE_DATE = Object.freeze({
 	now: () => Date.now(),
 	parse: (s: unknown) => Date.parse(String(s)),
+	UTC: (...parts: unknown[]) =>
+		Date.UTC(...(parts as [number, number, ...number[]])),
 });
 
 const SAFE_OBJECT = Object.freeze({
@@ -206,6 +208,56 @@ const STRING_METHODS: Record<string, (s: string, args: unknown[]) => unknown> =
 		localeCompare: (s, [v]) => s.localeCompare(String(v)),
 	};
 
+// A date in a script IS its ISO 8601 string (see NewExpression), so the
+// read-only Date API works on any string that parses as one:
+// `now.getUTCDate()`, `d.toISOString().slice(0, 10)`, `Date.UTC(d.getUTCFullYear(), ...)`.
+// Setters are out - values are immutable; build a new date instead.
+const DATE_METHODS = new Set([
+	"getTime",
+	"getTimezoneOffset",
+	"getFullYear",
+	"getMonth",
+	"getDate",
+	"getDay",
+	"getHours",
+	"getMinutes",
+	"getSeconds",
+	"getMilliseconds",
+	"getUTCFullYear",
+	"getUTCMonth",
+	"getUTCDate",
+	"getUTCDay",
+	"getUTCHours",
+	"getUTCMinutes",
+	"getUTCSeconds",
+	"getUTCMilliseconds",
+	"toISOString",
+	"toJSON",
+	"toUTCString",
+	"toDateString",
+	"toTimeString",
+	"toLocaleDateString",
+	"toLocaleTimeString",
+	"toLocaleString",
+]);
+
+const DATE_SETTER =
+	/^set(UTC)?(FullYear|Month|Date|Hours|Minutes|Seconds|Milliseconds|Time)$/;
+
+function callDateMethod(s: string, method: string, args: unknown[]): unknown {
+	const d = new Date(s);
+	if (Number.isNaN(d.getTime())) {
+		throw new ExprError(
+			`Cannot call ${method}() on ${JSON.stringify(s)}: not a date`,
+			"type",
+		);
+	}
+	const fn = (d as unknown as Record<string, (...a: unknown[]) => unknown>)[
+		method
+	];
+	return fn?.apply(d, args);
+}
+
 const NUMBER_METHODS: Record<string, (n: number, args: unknown[]) => unknown> =
 	{
 		toFixed: (n, [d]) => n.toFixed(d as number | undefined),
@@ -310,12 +362,19 @@ function callMethod(obj: unknown, method: string, args: unknown[]): unknown {
 	}
 	if (typeof obj === "string") {
 		const impl = STRING_METHODS[method];
-		if (!impl)
+		if (impl) return impl(obj, args);
+		if (DATE_METHODS.has(method)) return callDateMethod(obj, method, args);
+		if (DATE_SETTER.test(method)) {
 			throw new ExprError(
-				`String method "${method}" is not allowed`,
+				`Dates are immutable ISO 8601 strings; instead of ${method}(), build a new one: ` +
+					"new Date(Date.parse(d) + ms) or new Date(Date.UTC(y, m, day)).",
 				"forbidden",
 			);
-		return impl(obj, args);
+		}
+		throw new ExprError(
+			`String method "${method}" is not allowed`,
+			"forbidden",
+		);
 	}
 	if (typeof obj === "number") {
 		const impl = NUMBER_METHODS[method];
