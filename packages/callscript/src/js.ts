@@ -101,8 +101,12 @@ export function parseJsScript(
 
 	const toolNames = options.tools ? new Set(options.tools) : undefined;
 	const wildcardOf = toolNames ? createWildcardMatcher(toolNames) : undefined;
+	// A binding the script declares shadows a mounted tool namespace, as in
+	// JS: `const team = teams.find(...)` reads the const even when `teams.*`
+	// is mounted. `declared` is filled by the binding pre-scan below.
 	const isMountedTool = (name: string): boolean =>
 		toolNames !== undefined &&
+		!declared.has(name.split(".")[0]!) &&
 		((!name.includes("*") && toolNames.has(name)) ||
 			(!isInternalName(name) && wildcardOf!(name) !== undefined));
 
@@ -151,6 +155,8 @@ export function parseJsScript(
 		}
 	};
 	scanNames(program.body);
+	// Only the script's own names - minted ids join usedIds later.
+	const declared = new Set(usedIds);
 	let mintCounter = 0;
 	const mint = (): string => {
 		let id: string;

@@ -294,6 +294,27 @@ describe("statement forms", () => {
 		expect(join).toMatchObject({ id: "done", call: "await.job" });
 	});
 
+	it("a declared binding shadows a mounted tool namespace", () => {
+		const script = parseJsScript(
+			`
+			const teams = await vercel.getTeams({ limit: 20 });
+			const team = teams.teams.find(x => x.slug === "better-auth");
+			const job = svc.export({});
+			const deps = await vercel.getDeployments({ teamId: team.id, limit: 1 });
+			return deps.deployments.length;
+		`,
+			{
+				tools: ["vercel.getTeams", "vercel.getDeployments", "svc.*", "teams.*"],
+			},
+		);
+		const [, team, job] = script.steps as [CallStep, LetStep, CallStep];
+		expect(team).toMatchObject({
+			id: "team",
+			let: 'teams.teams.find(x => x.slug === "better-auth")',
+		});
+		expect(job).toMatchObject({ id: "job", call: "svc.export", await: false });
+	});
+
 	it("without the registry, an un-awaited call compiles as a let", () => {
 		const script = parseJsScript(`
 			const stale = issues.filter(i => i.stale);
