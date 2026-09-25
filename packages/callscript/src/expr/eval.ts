@@ -1,3 +1,4 @@
+import { base64, base64Url } from "@better-auth/utils/base64";
 import type * as acorn from "acorn";
 import { ExprError, FORBIDDEN_PROPS, parseExpr } from "./parse";
 
@@ -86,14 +87,13 @@ const SAFE_ARRAY = Object.freeze({
  * sending mail means base64url-encoding an RFC822 string) and expressions
  * had no way to touch it. Pure string→string, no host authority.
  */
+const UTF8 = new TextDecoder();
 const SAFE_BASE64 = Object.freeze({
-	encode: (v: unknown) => Buffer.from(String(v), "utf8").toString("base64"),
-	decode: (v: unknown) => Buffer.from(String(v), "base64").toString("utf8"),
+	encode: (v: unknown) => base64.encode(String(v)),
+	decode: (v: unknown) => UTF8.decode(base64.decode(String(v))),
 	/** URL-safe alphabet, no padding - what Gmail's `raw`/`body.data` use. */
-	encodeUrl: (v: unknown) =>
-		Buffer.from(String(v), "utf8").toString("base64url"),
-	decodeUrl: (v: unknown) =>
-		Buffer.from(String(v), "base64url").toString("utf8"),
+	encodeUrl: (v: unknown) => base64Url.encode(String(v), { padding: false }),
+	decodeUrl: (v: unknown) => UTF8.decode(base64Url.decode(String(v))),
 });
 
 const SAFE_NUMBER = Object.freeze({

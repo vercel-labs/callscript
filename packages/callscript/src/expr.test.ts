@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { evalExpr } from "./expr/eval";
 import { collectRefs, ExprError, parseExpr } from "./expr/parse";
 
@@ -204,10 +204,19 @@ describe("evalExpr", () => {
 	});
 
 	it("encodes and decodes base64 (incl. url-safe)", () => {
-		expect(evalExpr('Base64.encode("hi")', {})).toBe("aGk=");
-		expect(evalExpr('Base64.decode("aGk=")', {})).toBe("hi");
-		expect(evalExpr('Base64.encodeUrl("hi?>")', {})).toBe("aGk_Pg");
-		expect(evalExpr('Base64.decodeUrl("aGk_Pg")', {})).toBe("hi?>");
+		vi.stubGlobal("Buffer", undefined);
+		try {
+			expect(evalExpr('Base64.encode("hi")', {})).toBe("aGk=");
+			expect(evalExpr('Base64.decode("aGk=")', {})).toBe("hi");
+			expect(evalExpr('Base64.encodeUrl("hi?>")', {})).toBe("aGk_Pg");
+			expect(evalExpr('Base64.decodeUrl("aGk_Pg")', {})).toBe("hi?>");
+			expect(evalExpr('Base64.encode("café ☕")', {})).toBe(
+				"Y2Fmw6kg4piV",
+			);
+			expect(evalExpr('Base64.decode("Y2Fmw6kg4piV")', {})).toBe("café ☕");
+		} finally {
+			vi.unstubAllGlobals();
+		}
 	});
 
 	it("stringifies objects as JSON in template literals", () => {

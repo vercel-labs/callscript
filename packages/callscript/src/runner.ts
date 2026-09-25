@@ -264,7 +264,7 @@ export function createRunner(options: RunnerOptions): ScriptRunner {
 			const json = JSON.stringify(entry.output);
 			if (
 				json !== undefined &&
-				Buffer.byteLength(json, "utf8") > maxDigestOutputBytes
+				new TextEncoder().encode(json).byteLength > maxDigestOutputBytes
 			) {
 				line.outputOmitted = true;
 			} else {
