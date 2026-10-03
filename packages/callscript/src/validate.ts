@@ -381,9 +381,14 @@ export function validateScript(
 					(!step.call.includes("*") && knownTools.has(step.call)) ||
 					(!isInternalName(step.call) && wildcardOf!(step.call) !== undefined);
 				if (!known) {
+					const near = nearestToolName(step.call, knownTools);
+					const hints = [
+						near === undefined ? undefined : `did you mean "${near}"?`,
+						options.unknownToolHint,
+					].filter((h): h is string => h !== undefined);
 					issues.push({
 						path: `${at}.call`,
-						message: `Unknown tool "${step.call}"${options.unknownToolHint ? ` - ${options.unknownToolHint}` : ""}`,
+						message: `Unknown tool "${step.call}"${hints.length > 0 ? ` - ${hints.join(" - ")}` : ""}`,
 					});
 				}
 			}
@@ -523,4 +528,55 @@ export function validateScript(
 
 	if (issues.length > 0) throw new ScriptValidationError(issues);
 	return script;
+}
+
+/**
+ * The mounted name a typo most likely meant: within a small edit
+ * distance of the whole name (`listIsues` -> `listIssues`), or the same
+ * final segment under another namespace (`slack.post` -> `chat.post`).
+ * Undefined when nothing is close - a wrong guess costs a retry too.
+ */
+function nearestToolName(
+	name: string,
+	known: ReadonlySet<string>,
+): string | undefined {
+	const target = name.toLowerCase();
+	const budget = Math.max(2, Math.floor(target.length / 4));
+	const tail = target.slice(target.lastIndexOf(".") + 1);
+	let best: { name: string; score: number } | undefined;
+	for (const candidate of known) {
+		if (candidate.includes("*")) continue;
+		const c = candidate.toLowerCase();
+		let score = editDistance(target, c, budget);
+		if (score > budget) {
+			// A weaker match: the right tool in the wrong namespace.
+			const ctail = c.slice(c.lastIndexOf(".") + 1);
+			if (tail.length < 3 || tail !== ctail) continue;
+			score = budget + 1;
+		}
+		if (best === undefined || score < best.score) {
+			best = { name: candidate, score };
+		}
+	}
+	return best?.name;
+}
+
+/** Levenshtein distance, capped: answers `max + 1` as soon as the
+ * strings are further apart than `max`. */
+function editDistance(a: string, b: string, max: number): number {
+	if (Math.abs(a.length - b.length) > max) return max + 1;
+	let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+	for (let i = 1; i <= a.length; i++) {
+		const next = [i];
+		let rowMin = i;
+		for (let j = 1; j <= b.length; j++) {
+			const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+			const d = Math.min(prev[j]! + 1, next[j - 1]! + 1, prev[j - 1]! + cost);
+			next.push(d);
+			if (d < rowMin) rowMin = d;
+		}
+		if (rowMin > max) return max + 1;
+		prev = next;
+	}
+	return prev[b.length]!;
 }
