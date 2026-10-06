@@ -201,7 +201,9 @@ describe("evalExpr", () => {
 		// Setters are mutation; point at the immutable alternative.
 		expect(() => evalExpr("now.setDate(1)", { now })).toThrow(/new Date\(/);
 		// ...and as a bare statement, where it reads like a tool call.
-		expect(() => parseJsScript("const d = new Date(); d.setDate(1); return d;")).toThrow(/instead of setDate\(\)/);
+		expect(() =>
+			parseJsScript("const d = new Date(); d.setDate(1); return d;"),
+		).toThrow(/instead of setDate\(\)/);
 		// Plain string methods still win when the name collides.
 		expect(evalExpr("now.slice(0, 4)", { now })).toBe("2026");
 	});
