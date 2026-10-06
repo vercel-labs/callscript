@@ -24,6 +24,7 @@
  */
 import * as acorn from "acorn";
 import { collectArgExprs } from "./args";
+import { DATE_SETTER, dateSetterHint } from "./expr/eval";
 import { collectRefs, ExprError, parseExpr, patternNames } from "./expr/parse";
 import { renameIdentifiers } from "./fn-expr";
 import type {
@@ -1126,6 +1127,12 @@ export function parseJsScript(
 								step.await = false;
 								pushCall(step, ctx);
 							}
+							continue;
+						}
+						// `d.setDate(...)` as a statement reads like a tool call; say what it is.
+						const method = name?.split(".").pop() ?? "";
+						if (name?.includes(".") && DATE_SETTER.test(method)) {
+							issue(stmt, dateSetterHint(method));
 							continue;
 						}
 						issue(
