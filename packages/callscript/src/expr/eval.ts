@@ -241,8 +241,12 @@ const DATE_METHODS = new Set([
 	"toLocaleString",
 ]);
 
-const DATE_SETTER =
+export const DATE_SETTER =
 	/^set(UTC)?(FullYear|Month|Date|Hours|Minutes|Seconds|Milliseconds|Time)$/;
+
+export const dateSetterHint = (method: string): string =>
+	`Dates are immutable ISO 8601 strings; instead of ${method}(), build a new one: ` +
+	"new Date(Date.parse(d) + ms) or new Date(Date.UTC(y, m, day)).";
 
 function callDateMethod(s: string, method: string, args: unknown[]): unknown {
 	const d = new Date(s);
@@ -365,11 +369,7 @@ function callMethod(obj: unknown, method: string, args: unknown[]): unknown {
 		if (impl) return impl(obj, args);
 		if (DATE_METHODS.has(method)) return callDateMethod(obj, method, args);
 		if (DATE_SETTER.test(method)) {
-			throw new ExprError(
-				`Dates are immutable ISO 8601 strings; instead of ${method}(), build a new one: ` +
-					"new Date(Date.parse(d) + ms) or new Date(Date.UTC(y, m, day)).",
-				"forbidden",
-			);
+			throw new ExprError(dateSetterHint(method), "forbidden");
 		}
 		throw new ExprError(
 			`String method "${method}" is not allowed`,

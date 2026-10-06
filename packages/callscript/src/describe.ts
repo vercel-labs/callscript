@@ -278,6 +278,8 @@ Rules:
 - expressions are pure JS (arrows, ternaries, template literals, ?.) - no regex,
   no new except new Date(...) (an ISO 8601 string; Date getters like getUTCDate(),
   getTime(), toISOString() read it; Date.UTC()/now()/parse() give ms; no setters);
+  the script runs in UTC - a day the user names (today, tomorrow) is in their zone:
+  d.toLocaleDateString("en-CA", { timeZone }) is its YYYY-MM-DD there
   globals: Math, JSON, Date, Object, Array, Number, String, Boolean, Base64
 - \`input\` holds per-run data (auth codes, approvals) when a run is re-executed
 - limits: ${lim.maxSteps} steps, ${lim.maxItemsPerStep} calls per fan-out, ${lim.maxTotalCalls} calls total per script${

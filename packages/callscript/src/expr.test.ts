@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { evalExpr } from "./expr/eval";
 import { collectRefs, ExprError, parseExpr } from "./expr/parse";
+import { parseJsScript } from "./js";
 
 const env = {
 	issues: [
@@ -199,6 +200,10 @@ describe("evalExpr", () => {
 		expect(() => evalExpr("s.getTime()", { s: "hello" })).toThrow(/not a date/);
 		// Setters are mutation; point at the immutable alternative.
 		expect(() => evalExpr("now.setDate(1)", { now })).toThrow(/new Date\(/);
+		// ...and as a bare statement, where it reads like a tool call.
+		expect(() =>
+			parseJsScript("const d = new Date(); d.setDate(1); return d;"),
+		).toThrow(/instead of setDate\(\)/);
 		// Plain string methods still win when the name collides.
 		expect(evalExpr("now.slice(0, 4)", { now })).toBe("2026");
 	});
