@@ -68,6 +68,31 @@ describe("durable runner", () => {
 		}
 	});
 
+	it("keeps a declared helper out of the record and derives it again on resume", async () => {
+		const storage = memoryStorage();
+		const { runner } = makeRunner(storage);
+		const script =
+			"const pick = (r) => ({ x: r.x }); const a = await svc.echo({ x: 1, y: 2 }); const g = await svc.gate({}); const b = await svc.echo({ v: [a].map(pick), ok: g.approved }); return b;";
+		const first = await runner.start({
+			script,
+			owner: "agent-1",
+			runId: "helper",
+		});
+		expect(first.status).toBe("suspended");
+
+		const stored = await storage.get("helper");
+		expect(stored?.state?.steps.pick?.released).toBe(true);
+		expect(stored?.state?.steps.pick).not.toHaveProperty("output");
+
+		const second = await runner.resume("helper", {
+			owner: "agent-1",
+			resolutions: { gate: true },
+		});
+		expect(second.status).toBe("completed");
+		if (second.status === "completed")
+			expect(second.output).toEqual({ v: [{ x: 1 }], ok: true });
+	});
+
 	it("re-submitting the same script id with resolutions continues the run", async () => {
 		const { runner } = makeRunner();
 		const script = {
