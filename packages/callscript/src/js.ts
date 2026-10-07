@@ -779,6 +779,81 @@ export function parseJsScript(
 		return pushCall(step, ctx);
 	};
 
+	/* -------------------------- conditional awaits ------------------------- */
+
+	/** A ternary with an awaited call on a branch - `c ? await a() : b`. */
+	const isConditionalAwait = (
+		node: acorn.AnyNode,
+	): node is acorn.ConditionalExpression =>
+		node.type === "ConditionalExpression" &&
+		(containsAwait(node.consequent) || containsAwait(node.alternate));
+
+	/** One ternary branch -> an expression source. An awaited call becomes
+	 * its own step under the branch's condition (minted id); a pure branch
+	 * stays an expression; a nested conditional await recurses. */
+	const compileCondBranch = (
+		node: acorn.AnyNode,
+		ctx: Ctx,
+	): string | undefined => {
+		if (isConditionalAwait(node)) return compileConditional(node, ctx);
+		if (node.type !== "AwaitExpression") return exprSrc(node, ctx);
+		const arg = node.argument;
+		if (
+			arg.type === "CallExpression" &&
+			dottedName(arg.callee) === "Promise.all" &&
+			arg.arguments[0]?.type === "ArrayExpression"
+		) {
+			return issue(
+				node,
+				"a ternary branch takes one awaited call or fan-out - bind a Promise.all tuple first, inside an if block",
+			);
+		}
+		const id = mint();
+		const binding = {
+			type: "Identifier",
+			name: id,
+			start: node.start,
+			end: node.end,
+			loc: node.loc,
+		} as unknown as acorn.Pattern;
+		const before = issues.length;
+		compileAwaited(node, binding, ctx, "statement");
+		return issues.length > before ? undefined : id;
+	};
+
+	/**
+	 * `c ? await a(...) : b` -> each awaited branch is a call step gated by
+	 * `if: c` / `if: !(c)` (the untaken one is skipped, never run), and the
+	 * value is the same ternary over the step ids. Both branches chain
+	 * after the same prior frontier - only one of them runs.
+	 */
+	const compileConditional = (
+		node: acorn.ConditionalExpression,
+		ctx: Ctx,
+	): string | undefined => {
+		const test = exprSrc(node.test, ctx);
+		if (test === undefined) return undefined;
+		const before = frontier;
+		const yes = compileCondBranch(node.consequent, {
+			...ctx,
+			cond: composeCond(ctx.cond, test),
+		});
+		const afterYes = frontier;
+		frontier = before;
+		const no = compileCondBranch(node.alternate, {
+			...ctx,
+			cond: composeCond(ctx.cond, `!(${test})`),
+		});
+		const afterNo = frontier;
+		const next = [
+			...(afterYes !== before ? afterYes : []),
+			...(afterNo !== before ? afterNo : []),
+		];
+		frontier = next.length > 0 ? next : before;
+		if (yes === undefined || no === undefined) return undefined;
+		return `(${test}) ? (${yes}) : (${no})`;
+	};
+
 	/* ------------------------------ statements ----------------------------- */
 
 	const compileDeclaration = (node: acorn.VariableDeclaration, ctx: Ctx) => {
@@ -796,6 +871,12 @@ export function parseJsScript(
 					decl.id,
 					"bind derived values to one name - destructure by deriving fields in later consts",
 				);
+				continue;
+			}
+			// `const x = c ? await a() : b` -> gated call step(s) + a let.
+			if (isConditionalAwait(decl.init)) {
+				const text = compileConditional(decl.init, ctx);
+				if (text !== undefined) pushStep({ id: decl.id.name, let: text }, ctx);
 				continue;
 			}
 			// Un-awaited call to a MOUNTED tool -> detached (fire-and-forget).
@@ -852,7 +933,9 @@ export function parseJsScript(
 			);
 			return;
 		}
-		const text = exprSrc(node.argument, ctx);
+		const text = isConditionalAwait(node.argument)
+			? compileConditional(node.argument, ctx)
+			: exprSrc(node.argument, ctx);
 		if (text === undefined) return;
 		if (ctx.topLevel && ctx.cond === undefined) {
 			output = text;

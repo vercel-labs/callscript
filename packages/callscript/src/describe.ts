@@ -267,6 +267,7 @@ More forms:
   const [a, b] = await Promise.all([x.one({}), y.two({})]); // independent calls run concurrently
   try { await repo.closeIssue({ ... }) }                    // without try/catch, a failed call
   catch (e) { await chat.post({ text: e.message }); }       //   fails the run; e = { message, code }
+  const r = found ? await x.get({ id: found.id }) : null;   // conditional call: the untaken branch never runs
   const job = svc.export({ ... });   // no await: fire-and-forget; a LATER script joins it: await job
   await x.del({ id }, { reason: "why", suspend: true });    // per-call options: reason, suspend
                                                             //   (ask a human first), onError: "skip"

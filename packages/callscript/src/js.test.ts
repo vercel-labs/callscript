@@ -515,6 +515,85 @@ describe("through validateScript and the engine", () => {
 		}
 	});
 
+	it("a conditional await compiles to a gated call step and a picking let", () => {
+		const script = parseJsScript(`
+			const issues = await github.listIssues({ repo: "api" });
+			const first = issues.length > 0 ? await github.closeIssue({ repo: "api", number: issues[0].number }) : null;
+		`);
+		expect(script.steps.slice(1)).toEqual([
+			{
+				id: "s1",
+				call: "github.closeIssue",
+				args: { repo: "api", number: "=issues[0].number" },
+				if: "issues.length > 0",
+			},
+			{ id: "first", let: "(issues.length > 0) ? (s1) : (null)" },
+		]);
+	});
+
+	it("a conditional await runs only the taken branch", async () => {
+		const calls: number[] = [];
+		const close = tool({
+			name: "github.closeIssue",
+			execute: (args: { repo: string; number: number }) => {
+				calls.push(args.number);
+				return { closed: args.number };
+			},
+		});
+		const engine = callscript({ tools: [listIssues, close] });
+		const result = await engine.run({
+			script: `
+				const issues = await github.listIssues({ repo: "api" });
+				const none = issues.length > 99 ? await github.closeIssue({ repo: "api", number: 99 }) : null;
+				const pick = issues.length > 0
+					? await github.closeIssue({ repo: "api", number: issues[0].number })
+					: await github.closeIssue({ repo: "api", number: 0 });
+				const after = await github.closeIssue({ repo: "api", number: 7 });
+				return { none, pick, after: after.closed };
+			`,
+		});
+		expect(result.status).toBe("ok");
+		if (result.status === "ok") {
+			expect(result.output).toEqual({
+				none: null,
+				pick: { closed: 1 },
+				after: 7,
+			});
+		}
+		expect(calls).toEqual([1, 7]);
+	});
+
+	it("a conditional await works in return and nested ternaries", async () => {
+		const engine = callscript({ tools: [listIssues, closeIssue] });
+		const result = await engine.run({
+			script: `
+				const issues = await github.listIssues({ repo: "api" });
+				return issues.length > 5
+					? null
+					: issues.length > 2
+						? await github.closeIssue({ repo: "api", number: 3 })
+						: "few";
+			`,
+		});
+		expect(result).toMatchObject({ status: "ok", output: { closed: 3 } });
+	});
+
+	it("a Promise.all tuple in a ternary branch is rejected", () => {
+		const issues = issuesOf(() =>
+			parseJsScript(
+				`const r = x ? await Promise.all([t.a({}), t.b({})]) : null;`,
+			),
+		);
+		expect(issues.join("\n")).toContain("ternary branch");
+	});
+
+	it("await in a ternary test still names the bind-first fix", () => {
+		const issues = issuesOf(() =>
+			parseJsScript(`const r = (await t.a({})) ? await t.b({}) : null;`),
+		);
+		expect(issues.join("\n")).toContain("bind it first");
+	});
+
 	it("format: 'json' keeps the JSON teaching surface", () => {
 		const engine = callscript({
 			tools: [listIssues, closeIssue],
