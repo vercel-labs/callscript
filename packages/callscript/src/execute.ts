@@ -612,6 +612,14 @@ function suspendedResult(
 	return { status: "suspended", suspensions, state: record, record };
 }
 
+function holdsFunction(value: unknown, seen = new Set<object>()): boolean {
+	if (typeof value === "function") return true;
+	if (typeof value !== "object" || value === null || seen.has(value))
+		return false;
+	seen.add(value);
+	return Object.values(value).some((item) => holdsFunction(item, seen));
+}
+
 /**
  * Run one step (let, call, or return), including its `if` condition,
  * `return` gate, env binding, and error capture. Returns an ExecuteResult
@@ -680,12 +688,18 @@ async function runLeafStep(
 		const output = isReturnStep(step)
 			? undefined
 			: evalExpr(step.let, env, ctx.evalOpts);
-		record.steps[step.id] = {
-			hash,
-			status: "done",
-			output,
-			durationMs: Date.now() - started,
-		};
+		// A helper the script declared (`const pick = (r) => ...`) is a function,
+		// and the record is plain data hosts store: it stays in this round's env
+		// and is recorded released, so a later round derives it again if a step
+		// it runs reads it.
+		record.steps[step.id] = holdsFunction(output)
+			? {
+					hash,
+					status: "done",
+					released: true,
+					durationMs: Date.now() - started,
+				}
+			: { hash, status: "done", output, durationMs: Date.now() - started };
 		env[step.id] = output;
 		return undefined;
 	} catch (err) {
