@@ -30,7 +30,10 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
+
+      # Trusted publishing (OIDC) needs npm 11.5.1 or later.
+      - run: npm install -g npm@^11.5.1 && npm --version
 
       - run: pnpm install --frozen-lockfile
 
@@ -128,4 +131,7 @@ jobs:
           npx changelogithub --to "$RELEASE_TAG"
 
       - name: Publish to npm
-        run: pnpm -r publish --provenance --access public --no-git-checks --tag ${{ steps.release.outputs.npm_tag }}
+        # npm authenticates through the trusted publisher configured for this
+        # workflow on npmjs.com (OIDC, no token) and adds provenance itself.
+        working-directory: packages/callscript
+        run: npm publish --access public --tag ${{ steps.release.outputs.npm_tag }}
