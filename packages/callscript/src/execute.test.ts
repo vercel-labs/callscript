@@ -508,6 +508,23 @@ describe("executeScript", () => {
 			expect(result.record.steps.big?.released).toBeUndefined();
 		});
 
+		it("measures call results when Buffer is unavailable", async () => {
+			const script = validateScript({
+				steps: [{ id: "a", call: "svc:GET /message", reason: "r" }],
+			});
+			vi.stubGlobal("Buffer", undefined);
+			try {
+				const result = await executeScript(script, {
+					handlers: { call: async () => ({ message: "café ☕" }) },
+				});
+				expect(result.status).toBe("ok");
+				if (result.status !== "ok") return;
+				expect(result.output).toEqual({ message: "café ☕" });
+			} finally {
+				vi.unstubAllGlobals();
+			}
+		});
+
 		it("rejects call results over maxCallResultBytes", async () => {
 			const script = validateScript({
 				intent: "huge result",
