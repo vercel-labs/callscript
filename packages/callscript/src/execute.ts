@@ -331,7 +331,7 @@ export function planExecution(script: Script, state?: RunState): StepPlan[] {
 
 function approxBytes(value: unknown): number {
 	const json = JSON.stringify(value);
-	return json === undefined ? 0 : Buffer.byteLength(json, "utf8");
+	return json === undefined ? 0 : new TextEncoder().encode(json).byteLength;
 }
 
 export async function executeScript(
