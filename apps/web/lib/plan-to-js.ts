@@ -1,5 +1,10 @@
 import type { CallStep, Script, Step } from "callscript";
 
+/** True when a key is safe to write bare as an object-literal key. Reserved
+ * words are fine as property names, so only identifier grammar is checked. */
+const isIdentifierKey = (key: string): boolean =>
+	/^[$_\p{ID_Start}](?:[$_\p{ID_Continue}]|\u200c|\u200d)*$/u.test(key);
+
 /** Render stored call args back to JS source: "=expr" strings become
  * bare expressions, "==lit" unescapes to the literal string. */
 function argsToJs(value: unknown): string {
@@ -13,7 +18,8 @@ function argsToJs(value: unknown): string {
 	}
 	if (value !== null && typeof value === "object") {
 		const entries = Object.entries(value).map(
-			([k, v]) => `${k}: ${argsToJs(v)}`,
+			([k, v]) =>
+				`${isIdentifierKey(k) ? k : JSON.stringify(k)}: ${argsToJs(v)}`,
 		);
 		return `{ ${entries.join(", ")} }`;
 	}
