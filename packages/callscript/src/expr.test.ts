@@ -77,6 +77,15 @@ describe("evalExpr", () => {
 		).toEqual(["name=beka", "tier=premium"]);
 	});
 
+	it("Object.keys/values/entries accept strings and arrays like JS", () => {
+		expect(evalExpr('Object.keys("ab")', {})).toEqual(["0", "1"]);
+		expect(evalExpr("Object.values([1, 2])", {})).toEqual([1, 2]);
+		expect(evalExpr("Object.entries(['x'])", {})).toEqual([["0", "x"]]);
+		expect(() => evalExpr("Object.keys(gone)", { gone: null })).toThrow(
+			"Object.keys expects an object, got null",
+		);
+	});
+
 	it("exposes only safe globals", () => {
 		expect(evalExpr("Math.max(1, 5, 3)", {})).toBe(5);
 		expect(evalExpr('JSON.parse("[1,2]")', {})).toEqual([1, 2]);

@@ -46,9 +46,9 @@ const SAFE_DATE = Object.freeze({
 });
 
 const SAFE_OBJECT = Object.freeze({
-	keys: (o: unknown) => Object.keys(asRecord(o)),
-	values: (o: unknown) => Object.values(asRecord(o)),
-	entries: (o: unknown) => Object.entries(asRecord(o)),
+	keys: (o: unknown) => Object.keys(asKeyed(o, "keys")),
+	values: (o: unknown) => Object.values(asKeyed(o, "values")),
+	entries: (o: unknown) => Object.entries(asKeyed(o, "entries")),
 	fromEntries: (e: unknown) => {
 		if (!Array.isArray(e))
 			throw new ExprError("Object.fromEntries expects an array", "type");
@@ -146,11 +146,13 @@ function asFn(v: unknown): (...args: unknown[]) => unknown {
 	return v as (...args: unknown[]) => unknown;
 }
 
-function asRecord(v: unknown): Record<string, unknown> {
-	if (v === null || typeof v !== "object" || Array.isArray(v)) {
-		throw new ExprError("Expected an object", "type");
+// Same as JS: strings and arrays give their index keys, so only null and
+// undefined throw - and the message says which one the script passed.
+function asKeyed(v: unknown, method: string): NonNullable<unknown> {
+	if (v === null || v === undefined) {
+		throw new ExprError(`Object.${method} expects an object, got ${v}`, "type");
 	}
-	return v as Record<string, unknown>;
+	return v;
 }
 
 // Full callback fidelity: (element, index, array) - models write standard
